@@ -41,19 +41,54 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
-          if make clean && make STATIC=1 EXEEXT=.exe; then
-            cp propagation_bot.exe dist/
-            echo "single_file=true" >> "$output_file"
-            echo "artifact_name=propagation-bot-windows-single-exe" >> "$output_file"
-          else
+          static_log="build-static.log"
+          dynamic_log="build-dynamic.log"
+          build_ok=false
+          single_file=false
+          artifact_name=""
+
+          if {
+            echo "[static] make clean"
             make clean
-            make EXEEXT=.exe
-            python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
-            echo "single_file=false" >> "$output_file"
-            echo "artifact_name=propagation-bot-windows-portable" >> "$output_file"
+            echo "[static] make STATIC=1 EXEEXT=.exe"
+            make STATIC=1 EXEEXT=.exe
+          } > "$static_log" 2>&1; then
+            cp propagation_bot.exe dist/
+            build_ok=true
+            single_file=true
+            artifact_name="propagation-bot-windows-single-exe"
+          else
+            rm -f propagation_bot.exe
+            {
+              echo "[dynamic] make clean"
+              make clean
+              echo "[dynamic] make EXEEXT=.exe"
+              make EXEEXT=.exe
+              echo "[dynamic] package dependencies"
+              python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
+            } > "$dynamic_log" 2>&1 || true
+
+            if [ -f dist/propagation_bot.exe ]; then
+              build_ok=true
+              single_file=false
+              artifact_name="propagation-bot-windows-portable"
+            fi
           fi
 
+          echo "build_ok=$build_ok" >> "$output_file"
+          echo "single_file=$single_file" >> "$output_file"
+          echo "artifact_name=$artifact_name" >> "$output_file"
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: propagation-bot-build-logs
+          path: build-*.log
+          if-no-files-found: warn
+
       - name: Upload artifact
+        if: steps.build.outputs.build_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.artifact_name }}
@@ -61,10 +96,25 @@ jobs:
           if-no-files-found: error
 
       - name: Write summary
+        if: always()
         run: |
           summary_file="$(cygpath -u "$GITHUB_STEP_SUMMARY")"
-          if [ "${{ steps.build.outputs.single_file }}" = "true" ]; then
+          if [ "${{ steps.build.outputs.build_ok }}" = "true" ] && [ "${{ steps.build.outputs.single_file }}" = "true" ]; then
             echo "生成结果：单文件 EXE 已成功构建。" >> "$summary_file"
-          else
+          elif [ "${{ steps.build.outputs.build_ok }}" = "true" ]; then
             echo "生成结果：静态单文件 EXE 未通过，已自动退回为便携包（EXE + 依赖 DLL）。" >> "$summary_file"
+          else
+            echo "生成结果：Windows 构建失败，下面附上最近的错误摘要。" >> "$summary_file"
+            echo "" >> "$summary_file"
+            echo "```text" >> "$summary_file"
+            if [ -f build-dynamic.log ]; then
+              tail -n 80 build-dynamic.log >> "$summary_file"
+            elif [ -f build-static.log ]; then
+              tail -n 80 build-static.log >> "$summary_file"
+            fi
+            echo "```" >> "$summary_file"
           fi
+
+      - name: Fail if build failed
+        if: steps.build.outputs.build_ok != 'true'
+        run: exit 1
