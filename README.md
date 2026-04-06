@@ -65,6 +65,21 @@ sudo apt install -y build-essential libcurl4-openssl-dev libsqlite3-dev libmosqu
 make
 ```
 
+## Windows EXE 打包
+
+仓库已经附带 GitHub Actions 自动构建流程：
+
+- 工作流：`Build Windows Package`
+- 触发方式：推送到 `main` 或在 GitHub 的 `Actions` 页面手动运行
+- 产物位置：工作流完成后，到对应运行记录的 `Artifacts` 下载
+
+构建策略如下：
+
+- 优先尝试生成单文件静态 `EXE`
+- 如果静态链接失败，则自动退回到“便携包”模式，上传 `EXE + 依赖 DLL`
+
+这样即使当前本地没有完整 Windows 编译链，你也可以直接从 GitHub 下载最新构建结果。
+
 ## NapCat / OneBot 11 建议
 
 - HTTP API：`http://127.0.0.1:3000`

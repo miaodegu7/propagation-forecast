@@ -1,0 +1,70 @@
+name: Build Windows Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-mosquitto
+
+      - name: Build package
+        id: build
+        run: |
+          set -euo pipefail
+          output_file="$(cygpath -u "$GITHUB_OUTPUT")"
+          rm -rf dist
+          mkdir -p dist
+
+          if make clean && make STATIC=1 EXEEXT=.exe; then
+            cp propagation_bot.exe dist/
+            echo "single_file=true" >> "$output_file"
+            echo "artifact_name=propagation-bot-windows-single-exe" >> "$output_file"
+          else
+            make clean
+            make EXEEXT=.exe
+            python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
+            echo "single_file=false" >> "$output_file"
+            echo "artifact_name=propagation-bot-windows-portable" >> "$output_file"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Write summary
+        run: |
+          summary_file="$(cygpath -u "$GITHUB_STEP_SUMMARY")"
+          if [ "${{ steps.build.outputs.single_file }}" = "true" ]; then
+            echo "生成结果：单文件 EXE 已成功构建。" >> "$summary_file"
+          else
+            echo "生成结果：静态单文件 EXE 未通过，已自动退回为便携包（EXE + 依赖 DLL）。" >> "$summary_file"
+          fi
