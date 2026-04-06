@@ -2,10 +2,10 @@
 
 typedef struct {
     app_t *app;
-    int client_fd;
+    app_socket_t client_fd;
 } client_ctx_t;
 
-static int read_http_request(int fd, http_request_t *req) {
+static int read_http_request(app_socket_t fd, http_request_t *req) {
     size_t cap = sizeof(req->body) + 4096;
     char *buffer = calloc(1, cap);
     if (!buffer) {
@@ -94,7 +94,7 @@ static int read_http_request(int fd, http_request_t *req) {
     return 0;
 }
 
-static int send_all(int fd, const char *buf, size_t len) {
+static int send_all(app_socket_t fd, const char *buf, size_t len) {
     size_t sent = 0;
     while (sent < len) {
         ssize_t n = send(fd, buf + sent, len - sent, 0);
@@ -106,7 +106,7 @@ static int send_all(int fd, const char *buf, size_t len) {
     return 0;
 }
 
-static void send_response(int fd, const char *status, const char *content_type, const char *body) {
+static void send_response(app_socket_t fd, const char *status, const char *content_type, const char *body) {
     size_t body_len = body ? strlen(body) : 0;
     char header[512];
     int n = snprintf(header, sizeof(header),
@@ -121,7 +121,7 @@ static void send_response(int fd, const char *status, const char *content_type, 
     }
 }
 
-static void send_redirect(int fd, const char *location) {
+static void send_redirect(app_socket_t fd, const char *location) {
     char header[512];
     int n = snprintf(header, sizeof(header),
         "HTTP/1.1 303 See Other\r\n"
@@ -130,7 +130,7 @@ static void send_redirect(int fd, const char *location) {
     send_all(fd, header, (size_t)n);
 }
 
-static void send_unauthorized(int fd) {
+static void send_unauthorized(app_socket_t fd) {
     const char *body = "<html><body><h1>401 Unauthorized</h1></body></html>";
     char header[512];
     int n = snprintf(header, sizeof(header),
@@ -720,7 +720,7 @@ static int extract_json_field(const char *json, const char *key, char *out, size
     return i > 0 ? 0 : -1;
 }
 
-static void handle_onebot_webhook(app_t *app, int fd, const http_request_t *req) {
+static void handle_onebot_webhook(app_t *app, app_socket_t fd, const http_request_t *req) {
     settings_t settings;
     storage_load_settings(app, &settings);
 
@@ -789,7 +789,7 @@ static void handle_onebot_webhook(app_t *app, int fd, const http_request_t *req)
     send_response(fd, "200 OK", "text/plain", "ok");
 }
 
-static void handle_request(app_t *app, int fd, const http_request_t *req) {
+static void handle_request(app_t *app, app_socket_t fd, const http_request_t *req) {
     settings_t settings;
     storage_load_settings(app, &settings);
     if (path_needs_auth(req->path) && !auth_ok(&settings, req)) {
@@ -908,12 +908,12 @@ static void *client_thread(void *arg) {
 }
 
 int http_server_run(app_t *app) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    app_socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == APP_INVALID_SOCKET) {
         return -1;
     }
     int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&one, sizeof(one));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -939,8 +939,8 @@ int http_server_run(app_t *app) {
     while (app->running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
-        if (client_fd < 0) {
+        app_socket_t client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd == APP_INVALID_SOCKET) {
             if (errno == EINTR) {
                 continue;
             }

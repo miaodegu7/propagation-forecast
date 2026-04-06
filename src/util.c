@@ -424,8 +424,28 @@ void apply_timezone(const char *tz_name) {
     if (!tz_name || !*tz_name) {
         return;
     }
+#ifdef _WIN32
+    _putenv_s("TZ", tz_name);
+    _tzset();
+#else
     setenv("TZ", tz_name, 1);
     tzset();
+#endif
+}
+
+int app_net_init(void) {
+#ifdef _WIN32
+    WSADATA wsa_data;
+    return WSAStartup(MAKEWORD(2, 2), &wsa_data) == 0 ? 0 : -1;
+#else
+    return 0;
+#endif
+}
+
+void app_net_cleanup(void) {
+#ifdef _WIN32
+    WSACleanup();
+#endif
 }
 
 void app_log(app_t *app, const char *level, const char *fmt, ...) {

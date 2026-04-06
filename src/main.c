@@ -6,7 +6,7 @@ static app_t *g_app = NULL;
 static void handle_signal(int signo) {
     if (g_app) {
         g_app->running = 0;
-        if (g_app->http_fd > 0) {
+        if (g_app->http_fd != APP_INVALID_SOCKET) {
             shutdown(g_app->http_fd, SHUT_RDWR);
         }
     }
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     app_t app;
     memset(&app, 0, sizeof(app));
     app.running = 1;
-    app.http_fd = -1;
+    app.http_fd = APP_INVALID_SOCKET;
 
     pthread_mutex_init(&app.db_mutex, NULL);
     pthread_mutex_init(&app.cache_mutex, NULL);
@@ -76,8 +76,14 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&app.spot_mutex, NULL);
     pthread_mutex_init(&app.rate_mutex, NULL);
 
+    if (app_net_init() != 0) {
+        fprintf(stderr, "failed to initialize network runtime\n");
+        return 1;
+    }
+
     if (storage_init(&app, db_path) != 0) {
         fprintf(stderr, "failed to initialize database: %s\n", db_path);
+        app_net_cleanup();
         return 1;
     }
 
@@ -108,6 +114,7 @@ int main(int argc, char **argv) {
     psk_stop(&app);
 
     sqlite3_close(app.db);
+    app_net_cleanup();
     pthread_mutex_destroy(&app.db_mutex);
     pthread_mutex_destroy(&app.cache_mutex);
     pthread_mutex_destroy(&app.refresh_mutex);

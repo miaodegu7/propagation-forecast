@@ -1,13 +1,11 @@
 #ifndef PROPAGATION_APP_H
 #define PROPAGATION_APP_H
 
-#include <arpa/inet.h>
 #include <ctype.h>
 #include <curl/curl.h>
 #include <errno.h>
 #include <math.h>
 #include <mosquitto.h>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <sqlite3.h>
 #include <stdarg.h>
@@ -16,14 +14,44 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
+
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <process.h>
+#include <io.h>
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+#define strtok_r strtok_s
+#define localtime_r(timer, result) (localtime_s((result), (timer)) == 0 ? (result) : NULL)
+#define sleep(seconds) Sleep((DWORD)((seconds) * 1000))
+#define close closesocket
+#ifndef SHUT_RDWR
+#define SHUT_RDWR SD_BOTH
+#endif
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <strings.h>
+#include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
+#endif
+
+#ifdef _WIN32
+typedef SOCKET app_socket_t;
+#define APP_INVALID_SOCKET INVALID_SOCKET
+#else
+typedef int app_socket_t;
+#define APP_INVALID_SOCKET (-1)
 #endif
 
 #define APP_NAME "业余无线电传播助手"
@@ -379,7 +407,7 @@ typedef struct {
 
     rate_limit_entry_t rate_limits[MAX_RATE_LIMITS];
     int running;
-    int http_fd;
+    app_socket_t http_fd;
 } app_t;
 
 typedef struct {
@@ -422,6 +450,8 @@ int grid_to_latlon(const char *grid, double *lat, double *lon);
 double haversine_km(double lat1, double lon1, double lat2, double lon2);
 int prefix_matches_grid(const char *grid, const char *prefix);
 void apply_timezone(const char *tz_name);
+int app_net_init(void);
+void app_net_cleanup(void);
 
 int storage_init(app_t *app, const char *db_path);
 int storage_load_settings(app_t *app, settings_t *out);
