@@ -51,6 +51,42 @@ static int extract_json_number_local(const char *json, const char *key, double *
     return (end != p) ? 0 : -1;
 }
 
+static int find_matching_grid_prefix(const settings_t *settings, const psk_spot_t *spot,
+                                     char *matched_prefix, size_t matched_prefix_len) {
+    char grids[MAX_HUGE_TEXT];
+    if (settings->psk_grids[0]) {
+        copy_string(grids, sizeof(grids), settings->psk_grids);
+    } else {
+        copy_string(grids, sizeof(grids), settings->station_grid);
+    }
+
+    char *save = NULL;
+    for (char *part = strtok_r(grids, ",|/ \t\r\n", &save); part; part = strtok_r(NULL, ",|/ \t\r\n", &save)) {
+        trim_whitespace(part);
+        if (!*part) {
+            continue;
+        }
+        if (prefix_matches_grid(spot->sender_grid, part) || prefix_matches_grid(spot->receiver_grid, part)) {
+            copy_string(matched_prefix, matched_prefix_len, part);
+            return 1;
+        }
+    }
+    if (matched_prefix && matched_prefix_len > 0) {
+        matched_prefix[0] = '\0';
+    }
+    return 0;
+}
+
+static void append_unique_csv(char *csv, size_t csv_len, const char *value) {
+    if (!value || !*value || csv_contains_ci(csv, value)) {
+        return;
+    }
+    if (csv[0]) {
+        strncat(csv, ",", csv_len - strlen(csv) - 1);
+    }
+    strncat(csv, value, csv_len - strlen(csv) - 1);
+}
+
 static void psk_add_spot(app_t *app, const psk_spot_t *spot) {
     pthread_mutex_lock(&app->spot_mutex);
     app->spots[app->spot_head] = *spot;
@@ -94,23 +130,12 @@ static void on_message_cb(struct mosquitto *mosq, void *userdata, const struct m
 
     const char *payload = (const char *)msg->payload;
     double number = 0.0;
-    if (extract_json_number_local(payload, "f", &number) == 0) {
-        spot.frequency_hz = number;
-    }
-    if (extract_json_number_local(payload, "rp", &number) == 0) {
-        spot.snr = (int)number;
-    }
-    if (extract_json_number_local(payload, "t", &number) == 0) {
-        spot.timestamp = (time_t)number;
-    } else {
-        spot.timestamp = time(NULL);
-    }
-    if (extract_json_number_local(payload, "sa", &number) == 0) {
-        spot.sender_adif = (int)number;
-    }
-    if (extract_json_number_local(payload, "ra", &number) == 0) {
-        spot.receiver_adif = (int)number;
-    }
+    if (extract_json_number_local(payload, "f", &number) == 0) spot.frequency_hz = number;
+    if (extract_json_number_local(payload, "rp", &number) == 0) spot.snr = (int)number;
+    if (extract_json_number_local(payload, "t", &number) == 0) spot.timestamp = (time_t)number;
+    else spot.timestamp = time(NULL);
+    if (extract_json_number_local(payload, "sa", &number) == 0) spot.sender_adif = (int)number;
+    if (extract_json_number_local(payload, "ra", &number) == 0) spot.receiver_adif = (int)number;
     extract_json_string_local(payload, "md", spot.mode, sizeof(spot.mode));
     extract_json_string_local(payload, "sc", spot.sender_call, sizeof(spot.sender_call));
     extract_json_string_local(payload, "sl", spot.sender_grid, sizeof(spot.sender_grid));
@@ -165,10 +190,10 @@ void psk_stop(app_t *app) {
 static int is_local_relevant(const settings_t *settings, const psk_spot_t *spot,
                              double station_lat, double station_lon,
                              int *counterpart_distance, char *peer_call, size_t peer_call_len,
-                             char *peer_grid, size_t peer_grid_len) {
+                             char *peer_grid, size_t peer_grid_len,
+                             char *matched_prefix, size_t matched_prefix_len) {
     int station_has_coords = !(station_lat == 0.0 && station_lon == 0.0);
-    int direct_match = prefix_matches_grid(spot->sender_grid, settings->station_grid) ||
-        prefix_matches_grid(spot->receiver_grid, settings->station_grid);
+    int direct_match = find_matching_grid_prefix(settings, spot, matched_prefix, matched_prefix_len);
     double sender_lat = 0.0, sender_lon = 0.0, receiver_lat = 0.0, receiver_lon = 0.0;
     int sender_ok = grid_to_latlon(spot->sender_grid, &sender_lat, &sender_lon) == 0;
     int receiver_ok = grid_to_latlon(spot->receiver_grid, &receiver_lat, &receiver_lon) == 0;
@@ -205,9 +230,15 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
     double station_lat = settings->latitude;
     double station_lon = settings->longitude;
     if ((station_lat == 0.0 && station_lon == 0.0) || isnan(station_lat) || isnan(station_lon)) {
-        if (grid_to_latlon(settings->station_grid, &station_lat, &station_lon) != 0) {
-            station_lat = 0.0;
-            station_lon = 0.0;
+        if (grid_to_latlon(settings->station_grid, &station_lat, &station_lon) != 0 && settings->psk_grids[0]) {
+            char first_grid[MAX_TEXT];
+            copy_string(first_grid, sizeof(first_grid), settings->psk_grids);
+            char *sep = strpbrk(first_grid, ",|/ \t\r\n");
+            if (sep) *sep = '\0';
+            if (grid_to_latlon(first_grid, &station_lat, &station_lon) != 0) {
+                station_lat = 0.0;
+                station_lon = 0.0;
+            }
         }
     }
 
@@ -230,9 +261,11 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
         int peer_distance = 0;
         char peer_call[MAX_TEXT] = {0};
         char peer_grid[MAX_TEXT] = {0};
-        int relevant = settings->station_grid[0] &&
+        char matched_prefix[MAX_TEXT] = {0};
+        int relevant = (settings->psk_grids[0] || settings->station_grid[0]) &&
             is_local_relevant(settings, spot, station_lat, station_lon, &peer_distance,
-                peer_call, sizeof(peer_call), peer_grid, sizeof(peer_grid));
+                peer_call, sizeof(peer_call), peer_grid, sizeof(peer_grid),
+                matched_prefix, sizeof(matched_prefix));
         if (!relevant) {
             continue;
         }
@@ -257,6 +290,7 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
                 spot->receiver_call, spot->receiver_grid,
                 spot->mode, spot->snr);
         }
+        append_unique_csv(out->matched_grids, sizeof(out->matched_grids), matched_prefix);
     }
     pthread_mutex_unlock(&app->spot_mutex);
 
@@ -313,14 +347,18 @@ void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, 
         int peer_distance = 0;
         char peer_call[MAX_TEXT] = {0};
         char peer_grid[MAX_TEXT] = {0};
+        char matched_prefix[MAX_TEXT] = {0};
         if (!is_local_relevant(settings, spot, station_lat, station_lon,
-                &peer_distance, peer_call, sizeof(peer_call), peer_grid, sizeof(peer_grid))) {
+                &peer_distance, peer_call, sizeof(peer_call), peer_grid, sizeof(peer_grid),
+                matched_prefix, sizeof(matched_prefix))) {
             continue;
         }
         char ts[64];
         format_time_local(spot->timestamp, ts, sizeof(ts));
         sb_append(rows, "<tr><td>");
         html_escape_to_sb(rows, ts);
+        sb_append(rows, "</td><td>");
+        html_escape_to_sb(rows, matched_prefix[0] ? matched_prefix : "-");
         sb_append(rows, "</td><td>");
         html_escape_to_sb(rows, spot->sender_call);
         sb_append(rows, " ");
@@ -341,6 +379,6 @@ void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, 
     pthread_mutex_unlock(&app->spot_mutex);
 
     if (emitted == 0) {
-        sb_append(rows, "<tr><td colspan=\"6\">最近窗口内还没有本地相关 6m spot</td></tr>");
+        sb_append(rows, "<tr><td colspan=\"7\">最近窗口内还没有本地相关 6m spot</td></tr>");
     }
 }

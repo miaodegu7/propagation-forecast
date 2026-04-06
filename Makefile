@@ -3,7 +3,7 @@ CFLAGS ?= -O2 -Wall -Wextra -Wpedantic -std=c11
 LDFLAGS ?=
 LDLIBS ?= -lcurl -lsqlite3 -lmosquitto -lpthread -lm
 
-SRC := src/main.c src/util.c src/storage.c src/fetch.c src/psk.c src/http_server.c
+SRC := src/main.c src/util.c src/storage.c src/fetch.c src/runtime.c src/psk.c src/http_server.c
 OBJ := $(SRC:.c=.o)
 
 TARGET := propagation_bot

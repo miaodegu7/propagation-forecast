@@ -193,6 +193,22 @@ int string_contains_ci(const char *haystack, const char *needle) {
     return 0;
 }
 
+int csv_contains_ci(const char *csv, const char *needle) {
+    if (!csv || !*csv || !needle || !*needle) {
+        return 0;
+    }
+    char temp[MAX_HUGE_TEXT];
+    copy_string(temp, sizeof(temp), csv);
+    char *save = NULL;
+    for (char *part = strtok_r(temp, ",|/ \t\r\n", &save); part; part = strtok_r(NULL, ",|/ \t\r\n", &save)) {
+        trim_whitespace(part);
+        if (*part && strcasecmp(part, needle) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 double clamp_double(double value, double min_value, double max_value) {
     if (value < min_value) {
         return min_value;
@@ -257,7 +273,7 @@ static void curl_global_once(void) {
     pthread_mutex_unlock(&once_mutex);
 }
 
-static char *http_request_common(const char *url, const char *bearer_token, const char *json_body, long *status_code) {
+static char *http_request_common(const char *url, const char *bearer_token, const char *json_body, long *status_code, size_t *out_size) {
     curl_global_once();
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -295,6 +311,9 @@ static char *http_request_common(const char *url, const char *bearer_token, cons
     if (status_code) {
         *status_code = code;
     }
+    if (out_size) {
+        *out_size = mem.size;
+    }
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
@@ -314,11 +333,15 @@ static char *http_request_common(const char *url, const char *bearer_token, cons
 }
 
 char *http_get_text(const char *url, const char *bearer_token, long *status_code) {
-    return http_request_common(url, bearer_token, NULL, status_code);
+    return http_request_common(url, bearer_token, NULL, status_code, NULL);
+}
+
+char *http_get_binary(const char *url, const char *bearer_token, long *status_code, size_t *out_size) {
+    return http_request_common(url, bearer_token, NULL, status_code, out_size);
 }
 
 char *http_post_json(const char *url, const char *bearer_token, const char *json_body, long *status_code) {
-    return http_request_common(url, bearer_token, json_body, status_code);
+    return http_request_common(url, bearer_token, json_body, status_code, NULL);
 }
 
 int grid_to_latlon(const char *grid, double *lat, double *lon) {

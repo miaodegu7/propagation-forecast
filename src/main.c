@@ -13,59 +13,50 @@ static void handle_signal(int signo) {
     (void)signo;
 }
 
-static const char *pick_report_kind(snapshot_t *snapshot, const char *slot_name) {
-    if (strcmp(slot_name, "morning") == 0) {
-        return snapshot->report_text;
-    }
-    return snapshot->report_text;
-}
-
-static void maybe_fire_slot(app_t *app, const char *slot_name, int enabled, const char *hhmm) {
-    if (!enabled || parse_hhmm(hhmm) < 0) {
+static void maybe_fire_schedule_rule(app_t *app, const schedule_rule_t *rule) {
+    if (!rule->enabled || parse_hhmm(rule->hhmm) < 0) {
         return;
     }
+
     time_t now = time(NULL);
     struct tm tm_local;
     localtime_r(&now, &tm_local);
     int minute_of_day = tm_local.tm_hour * 60 + tm_local.tm_min;
-    if (minute_of_day != parse_hhmm(hhmm)) {
+    if (minute_of_day != parse_hhmm(rule->hhmm)) {
         return;
     }
 
     char today[32];
     format_iso_date_local(now, today, sizeof(today));
-    char last_fire[32];
-    storage_get_last_fire(app, slot_name, last_fire, sizeof(last_fire));
-    if (strcmp(last_fire, today) == 0) {
+    if (strcmp(rule->last_fire_date, today) == 0) {
         return;
     }
 
-    refresh_snapshot(app, 1);
+    refresh_snapshot(app, 0);
     pthread_mutex_lock(&app->cache_mutex);
     snapshot_t snapshot = app->snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
-    const char *report = pick_report_kind(&snapshot, slot_name);
+    const char *report = app_get_report_by_kind(&snapshot, rule->report_kind);
     if (send_report_to_all_targets(app, report) >= 0) {
-        storage_set_last_fire(app, slot_name, today);
-        app_log(app, "INFO", "已完成 %s 定时推送", slot_name);
+        storage_set_schedule_last_fire(app, rule->id, today);
+        app_log(app, "INFO", "已执行定时推送: %s %s", rule->label, rule->hhmm);
     }
 }
 
 static void *scheduler_thread(void *arg) {
     app_t *app = (app_t *)arg;
     while (app->running) {
-        settings_t settings;
-        storage_load_settings(app, &settings);
-        apply_timezone(settings.timezone);
-        pthread_mutex_lock(&app->cache_mutex);
-        app->settings = settings;
-        pthread_mutex_unlock(&app->cache_mutex);
+        app_run_periodic_fetches(app);
+        app_check_alerts(app);
 
-        refresh_snapshot(app, 0);
-        maybe_fire_slot(app, "morning", settings.morning_enabled, settings.schedule_morning);
-        maybe_fire_slot(app, "evening", settings.evening_enabled, settings.schedule_evening);
+        schedule_rule_t rules[MAX_SCHEDULES];
+        int count = 0;
+        storage_load_schedules(app, rules, MAX_SCHEDULES, &count);
+        for (int i = 0; i < count; ++i) {
+            maybe_fire_schedule_rule(app, &rules[i]);
+        }
 
-        for (int i = 0; i < 30 && app->running; ++i) {
+        for (int i = 0; i < 5 && app->running; ++i) {
             sleep(1);
         }
     }
@@ -78,10 +69,12 @@ int main(int argc, char **argv) {
     memset(&app, 0, sizeof(app));
     app.running = 1;
     app.http_fd = -1;
+
     pthread_mutex_init(&app.db_mutex, NULL);
     pthread_mutex_init(&app.cache_mutex, NULL);
     pthread_mutex_init(&app.refresh_mutex, NULL);
     pthread_mutex_init(&app.spot_mutex, NULL);
+    pthread_mutex_init(&app.rate_mutex, NULL);
 
     if (storage_init(&app, db_path) != 0) {
         fprintf(stderr, "failed to initialize database: %s\n", db_path);
@@ -94,9 +87,17 @@ int main(int argc, char **argv) {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
+    char temp[64];
+    storage_get_state(&app, "last_geomag_alert_g", temp, sizeof(temp));
+    app.last_geomag_alert_g = atoi(temp);
+    storage_get_state(&app, "last_6m_alert_level", temp, sizeof(temp));
+    app.last_sixm_alert_level = atoi(temp);
+    storage_get_state(&app, "last_6m_alert_at", temp, sizeof(temp));
+    app.last_sixm_alert_at = (time_t)atoll(temp);
+
     app_log(&app, "INFO", "服务启动，数据库: %s", db_path);
     psk_start(&app);
-    refresh_snapshot(&app, 1);
+    app_force_refresh(&app);
 
     pthread_t scheduler;
     pthread_create(&scheduler, NULL, scheduler_thread, &app);
@@ -111,6 +112,7 @@ int main(int argc, char **argv) {
     pthread_mutex_destroy(&app.cache_mutex);
     pthread_mutex_destroy(&app.refresh_mutex);
     pthread_mutex_destroy(&app.spot_mutex);
+    pthread_mutex_destroy(&app.rate_mutex);
 
     return server_rc == 0 ? 0 : 1;
 }
