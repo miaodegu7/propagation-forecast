@@ -1,0 +1,14 @@
+[Unit]
+Description=Propagation Forecast Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/propagation-bot
+ExecStart=/opt/propagation-bot/propagation_bot /opt/propagation-bot/propagation.db
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
