@@ -10,6 +10,7 @@
 - 6m 一般提醒 / 重点提醒 / 强提醒
 - 可配置问词、模板、发送频率、时区、网格、目标、卫星筛选
 - 中文网页管理后台
+- OneBot 群发间隔、失败重试与长期运行脚本
 
 ## 运行方式
 
@@ -33,6 +34,7 @@
 
 - 台站呼号、主网格、PSK 监控网格、经纬度、海拔、时区
 - OneBot API 地址、Access Token、回调令牌、机器人名称 / QQ / 密码保存项
+- OneBot 群发间隔、失败重试次数、重试等待毫秒
 - HAMqsl / 天气 / Tropo / 流星雨 / 卫星 / PSK 评估的独立抓取频率
 - 每分钟问答限流
 - 地磁告警阈值
@@ -97,6 +99,13 @@ make
 
 这些问词都可以在后台改。
 
+如果你准备按“更像真人 QQ”长期挂着跑，建议继续使用 `NapCat / OneBot`，并配合仓库里的 Windows 看门狗脚本：
+
+- [Windows 常驻脚本说明](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/README.md)
+- [run-watchdog.bat](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/run-watchdog.bat)
+- [watchdog.ps1](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/watchdog.ps1)
+- [install-startup-task.ps1](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/install-startup-task.ps1)
+
 ## 数据说明
 
 - `HAMqsl` 负责太阳活动、HF 段况、VHF 条件、小组件图
@@ -116,6 +125,7 @@ make
 - MQTT 自动重连
 - 后台和机器人共用同一份快照缓存
 - 适合配合 `systemd` 或其他守护方式常驻
+- Windows 下可配合看门狗脚本和计划任务自动重启
 
 仓库内已提供 `systemd` 示例：
 

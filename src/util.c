@@ -433,6 +433,20 @@ void apply_timezone(const char *tz_name) {
 #endif
 }
 
+void app_sleep_ms(int milliseconds) {
+    if (milliseconds <= 0) {
+        return;
+    }
+#ifdef _WIN32
+    Sleep((DWORD)milliseconds);
+#else
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (long)(milliseconds % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+#endif
+}
+
 int app_net_init(void) {
 #ifdef _WIN32
     WSADATA wsa_data;

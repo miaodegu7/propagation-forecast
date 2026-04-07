@@ -133,6 +133,9 @@ typedef struct {
     char bot_name[MAX_TEXT];
     char bot_qq[MAX_TEXT];
     char bot_password[MAX_TEXT];
+    int onebot_send_delay_ms;
+    int onebot_retry_count;
+    int onebot_retry_delay_ms;
     char schedule_morning[MAX_SMALL_TEXT];
     char schedule_evening[MAX_SMALL_TEXT];
     int morning_enabled;
@@ -450,6 +453,7 @@ int grid_to_latlon(const char *grid, double *lat, double *lon);
 double haversine_km(double lat1, double lon1, double lat2, double lon2);
 int prefix_matches_grid(const char *grid, const char *prefix);
 void apply_timezone(const char *tz_name);
+void app_sleep_ms(int milliseconds);
 int app_net_init(void);
 void app_net_cleanup(void);
 

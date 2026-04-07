@@ -85,6 +85,9 @@ static int seed_defaults(sqlite3 *db) {
         {"bot_name", "传播助手"},
         {"bot_qq", ""},
         {"bot_password", ""},
+        {"onebot_send_delay_ms", "1200"},
+        {"onebot_retry_count", "1"},
+        {"onebot_retry_delay_ms", "2500"},
         {"hamqsl_interval_minutes", "30"},
         {"weather_interval_minutes", "30"},
         {"tropo_interval_minutes", "60"},
@@ -245,6 +248,9 @@ int storage_load_settings(app_t *app, settings_t *out) {
     load_text_or_default(app->db, "bot_name", out->bot_name, sizeof(out->bot_name), "传播助手");
     load_text_or_default(app->db, "bot_qq", out->bot_qq, sizeof(out->bot_qq), "");
     load_text_or_default(app->db, "bot_password", out->bot_password, sizeof(out->bot_password), "");
+    out->onebot_send_delay_ms = load_int_or_default(app->db, "onebot_send_delay_ms", 1200);
+    out->onebot_retry_count = load_int_or_default(app->db, "onebot_retry_count", 1);
+    out->onebot_retry_delay_ms = load_int_or_default(app->db, "onebot_retry_delay_ms", 2500);
     load_text_or_default(app->db, "schedule_morning", out->schedule_morning, sizeof(out->schedule_morning), "08:30");
     load_text_or_default(app->db, "schedule_evening", out->schedule_evening, sizeof(out->schedule_evening), "20:30");
     out->morning_enabled = load_int_or_default(app->db, "morning_enabled", 1);
@@ -307,6 +313,9 @@ int storage_load_settings(app_t *app, settings_t *out) {
     pthread_mutex_unlock(&app->db_mutex);
 
     out->http_port = clamp_int(out->http_port, 1, 65535);
+    out->onebot_send_delay_ms = clamp_int(out->onebot_send_delay_ms, 0, 15000);
+    out->onebot_retry_count = clamp_int(out->onebot_retry_count, 0, 5);
+    out->onebot_retry_delay_ms = clamp_int(out->onebot_retry_delay_ms, 0, 30000);
     out->hamqsl_interval_minutes = clamp_int(out->hamqsl_interval_minutes, 5, 1440);
     out->weather_interval_minutes = clamp_int(out->weather_interval_minutes, 5, 1440);
     out->tropo_interval_minutes = clamp_int(out->tropo_interval_minutes, 5, 1440);

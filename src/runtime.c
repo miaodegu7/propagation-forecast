@@ -124,13 +124,26 @@ int onebot_send_message(app_t *app, target_type_t type, const char *target_id, c
     json_escape_to_sb(&json, message);
     sb_append(&json, "\",\"auto_escape\":false}");
 
-    long status = 0;
-    char *response = http_post_json(url, settings.onebot_access_token, json.data ? json.data : "{}", &status);
-    int ok = response != NULL && status >= 200 && status < 300;
-    if (!ok) {
-        app_log(app, "ERROR", "OneBot 发送失败: target=%s status=%ld", target_id, status);
+    int attempts = settings.onebot_retry_count + 1;
+    int ok = 0;
+    long last_status = 0;
+    for (int attempt = 1; attempt <= attempts; ++attempt) {
+        long status = 0;
+        char *response = http_post_json(url, settings.onebot_access_token, json.data ? json.data : "{}", &status);
+        ok = response != NULL && status >= 200 && status < 300;
+        last_status = status;
+        free(response);
+        if (ok) {
+            break;
+        }
+        if (attempt < attempts && settings.onebot_retry_delay_ms > 0) {
+            app_sleep_ms(settings.onebot_retry_delay_ms);
+        }
     }
-    free(response);
+    if (!ok) {
+        app_log(app, "ERROR", "OneBot 发送失败: target=%s status=%ld retries=%d",
+            target_id, last_status, settings.onebot_retry_count);
+    }
     sb_free(&json);
     return ok ? 0 : -1;
 }
@@ -138,6 +151,10 @@ int onebot_send_message(app_t *app, target_type_t type, const char *target_id, c
 int send_report_to_all_targets(app_t *app, const char *message) {
     target_t targets[MAX_TARGETS];
     int count = 0;
+    settings_t settings;
+    pthread_mutex_lock(&app->cache_mutex);
+    settings = app->settings;
+    pthread_mutex_unlock(&app->cache_mutex);
     storage_load_targets(app, targets, MAX_TARGETS, &count);
     int sent = 0;
     int failed = 0;
@@ -149,6 +166,9 @@ int send_report_to_all_targets(app_t *app, const char *message) {
             sent++;
         } else {
             failed++;
+        }
+        if (i + 1 < count && settings.onebot_send_delay_ms > 0) {
+            app_sleep_ms(settings.onebot_send_delay_ms);
         }
     }
     app_log(app, failed ? "WARN" : "INFO", "群发完成: success=%d failed=%d", sent, failed);

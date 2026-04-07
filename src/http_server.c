@@ -364,6 +364,7 @@ static void save_settings_from_form(app_t *app, const char *body) {
         "bind_addr", "http_port", "admin_user", "admin_password",
         "station_name", "station_grid", "psk_grids", "latitude", "longitude", "altitude_m", "timezone",
         "onebot_api_base", "onebot_access_token", "onebot_webhook_token", "bot_name", "bot_qq", "bot_password",
+        "onebot_send_delay_ms", "onebot_retry_count", "onebot_retry_delay_ms",
         "hamqsl_interval_minutes", "weather_interval_minutes", "tropo_interval_minutes",
         "meteor_interval_hours", "satellite_interval_hours", "psk_eval_interval_seconds", "snapshot_rebuild_seconds",
         "psk_radius_km", "psk_window_minutes", "rate_limit_per_minute",
@@ -539,7 +540,10 @@ static char *render_dashboard(app_t *app) {
     append_input(&page, "onebot_api_base", "OneBot API 地址", settings.onebot_api_base, "text");
     append_input(&page, "onebot_access_token", "OneBot Access Token", settings.onebot_access_token, "text");
     append_input(&page, "onebot_webhook_token", "回调令牌", settings.onebot_webhook_token, "text");
-    sb_append(&page, "</div><h3>抓取频率</h3><div class=\"three\">");
+    append_input_int(&page, "onebot_send_delay_ms", "群发间隔(ms)", settings.onebot_send_delay_ms);
+    append_input_int(&page, "onebot_retry_count", "失败重试次数", settings.onebot_retry_count);
+    append_input_int(&page, "onebot_retry_delay_ms", "重试等待(ms)", settings.onebot_retry_delay_ms);
+    sb_append(&page, "</div><p class=\"help\">建议真人号场景保持群发间隔 1000ms 以上，并保留至少 1 次失败重试，减少 NapCat 或网络抖动造成的漏发。</p><h3>抓取频率</h3><div class=\"three\">");
     append_input_int(&page, "hamqsl_interval_minutes", "HAMqsl 分钟", settings.hamqsl_interval_minutes);
     append_input_int(&page, "weather_interval_minutes", "天气分钟", settings.weather_interval_minutes);
     append_input_int(&page, "tropo_interval_minutes", "Tropo 分钟", settings.tropo_interval_minutes);
