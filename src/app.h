@@ -22,6 +22,7 @@
 #define _WIN32_WINNT 0x0601
 #endif
 #include <winsock2.h>
+#include <wchar.h>
 #include <windows.h>
 #include <ws2tcpip.h>
 #include <shellapi.h>
@@ -415,6 +416,7 @@ typedef struct {
     app_socket_t http_fd;
     int open_admin_console_on_start;
     int admin_console_opened;
+    char last_error[MAX_LOG_TEXT];
 } app_t;
 
 typedef struct {
@@ -461,6 +463,12 @@ void app_sleep_ms(int milliseconds);
 void app_default_db_path(char *out, size_t out_len);
 void app_prepare_desktop_mode(int hide_console);
 void app_open_admin_console(const settings_t *settings);
+void app_write_boot_log(const char *fmt, ...);
+void app_set_last_error(app_t *app, const char *fmt, ...);
+void app_show_startup_error(const char *title, const char *message);
+#ifdef _WIN32
+int app_windows_path_to_utf16(const char *path, wchar_t *out, size_t out_len);
+#endif
 int app_net_init(void);
 void app_net_cleanup(void);
 

@@ -928,11 +928,15 @@ int http_server_run(app_t *app) {
     }
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        app_set_last_error(app, "HTTP 后台绑定失败: %s:%d，请检查端口是否被占用",
+            app->settings.bind_addr, app->settings.http_port);
         app_log(app, "ERROR", "HTTP 绑定失败: %s:%d", app->settings.bind_addr, app->settings.http_port);
         close(fd);
         return -1;
     }
     if (listen(fd, 32) != 0) {
+        app_set_last_error(app, "HTTP 后台监听失败: %s:%d",
+            app->settings.bind_addr, app->settings.http_port);
         app_log(app, "ERROR", "HTTP 监听失败");
         close(fd);
         return -1;

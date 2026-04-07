@@ -173,12 +173,29 @@ static int seed_defaults(sqlite3 *db) {
 }
 
 int storage_init(app_t *app, const char *db_path) {
-    int rc = sqlite3_open(db_path, &app->db);
+    int rc = SQLITE_ERROR;
+#ifdef _WIN32
+    wchar_t wide_db_path[1024];
+    if (app_windows_path_to_utf16(db_path, wide_db_path, sizeof(wide_db_path) / sizeof(wide_db_path[0])) != 0) {
+        app_set_last_error(app, "数据库路径无法解析: %s", db_path ? db_path : "(null)");
+        return -1;
+    }
+    rc = sqlite3_open16(wide_db_path, &app->db);
+#else
+    rc = sqlite3_open(db_path, &app->db);
+#endif
     if (rc != SQLITE_OK) {
+        app_set_last_error(app, "数据库初始化失败: %s (%s)",
+            db_path ? db_path : "(null)",
+            app->db ? sqlite3_errmsg(app->db) : "sqlite open failed");
+        if (app->db) {
+            sqlite3_close(app->db);
+            app->db = NULL;
+        }
         return -1;
     }
 
-    exec_sql(app->db,
+    rc = exec_sql(app->db,
         "PRAGMA journal_mode=WAL;"
         "CREATE TABLE IF NOT EXISTS settings ("
         " key TEXT PRIMARY KEY,"
@@ -219,8 +236,17 @@ int storage_init(app_t *app, const char *db_path) {
         " level TEXT NOT NULL,"
         " message TEXT NOT NULL"
         ");");
+    if (rc != SQLITE_OK) {
+        app_set_last_error(app, "数据库建表失败: %s", sqlite3_errmsg(app->db));
+        sqlite3_close(app->db);
+        app->db = NULL;
+        return -1;
+    }
 
     if (seed_defaults(app->db) != SQLITE_OK) {
+        app_set_last_error(app, "数据库默认数据初始化失败: %s", sqlite3_errmsg(app->db));
+        sqlite3_close(app->db);
+        app->db = NULL;
         return -1;
     }
     return 0;

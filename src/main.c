@@ -91,6 +91,7 @@ int main(int argc, char **argv) {
     }
 
     app_prepare_desktop_mode(hide_console);
+    app_write_boot_log("程序启动，数据库路径: %s", db_path);
 
     app_t app;
     memset(&app, 0, sizeof(app));
@@ -112,11 +113,21 @@ int main(int argc, char **argv) {
 
     if (app_net_init() != 0) {
         fprintf(stderr, "failed to initialize network runtime\n");
+        app_write_boot_log("网络运行时初始化失败");
+        if (hide_console) {
+            app_show_startup_error("传播后台启动失败", "网络运行时初始化失败，请查看 propagation_bot.log");
+        }
         return 1;
     }
 
     if (storage_init(&app, db_path) != 0) {
         fprintf(stderr, "failed to initialize database: %s\n", db_path);
+        if (hide_console) {
+            char message[1024];
+            snprintf(message, sizeof(message), "%s\n\n请查看同目录下的 propagation_bot.log",
+                app.last_error[0] ? app.last_error : "数据库初始化失败");
+            app_show_startup_error("传播后台启动失败", message);
+        }
         app_net_cleanup();
         return 1;
     }
@@ -143,6 +154,12 @@ int main(int argc, char **argv) {
     pthread_create(&scheduler, NULL, scheduler_thread, &app);
 
     int server_rc = http_server_run(&app);
+    if (server_rc != 0 && hide_console && !app.admin_console_opened) {
+        char message[1024];
+        snprintf(message, sizeof(message), "%s\n\n请查看同目录下的 propagation_bot.log",
+            app.last_error[0] ? app.last_error : "HTTP 后台启动失败");
+        app_show_startup_error("传播后台启动失败", message);
+    }
     app.running = 0;
     pthread_join(scheduler, NULL);
     psk_stop(&app);

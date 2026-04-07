@@ -1,6 +1,118 @@
 #include "app.h"
 #include <locale.h>
 
+#ifdef _WIN32
+static int utf16_to_utf8(const wchar_t *src, char *dst, size_t dst_len) {
+    if (!src || !dst || dst_len == 0) {
+        return -1;
+    }
+    int written = WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, (int)dst_len, NULL, NULL);
+    if (written <= 0) {
+        if (dst_len > 0) {
+            dst[0] = '\0';
+        }
+        return -1;
+    }
+    return 0;
+}
+
+int app_windows_path_to_utf16(const char *path, wchar_t *out, size_t out_len) {
+    if (!path || !out || out_len == 0) {
+        return -1;
+    }
+    int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, out, (int)out_len);
+    if (written > 0) {
+        return 0;
+    }
+    written = MultiByteToWideChar(CP_ACP, 0, path, -1, out, (int)out_len);
+    if (written > 0) {
+        return 0;
+    }
+    out[0] = L'\0';
+    return -1;
+}
+
+static int get_exe_path_utf16(wchar_t *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return -1;
+    }
+    DWORD len = GetModuleFileNameW(NULL, out, (DWORD)out_len);
+    if (len == 0 || len >= out_len) {
+        out[0] = L'\0';
+        return -1;
+    }
+    return 0;
+}
+
+static int build_exe_sidecar_path_utf16(const wchar_t *filename, wchar_t *out, size_t out_len) {
+    if (!filename || !out || out_len == 0) {
+        return -1;
+    }
+    if (get_exe_path_utf16(out, out_len) != 0) {
+        return -1;
+    }
+    wchar_t *slash = wcsrchr(out, L'\\');
+    if (!slash) {
+        return -1;
+    }
+    slash[1] = L'\0';
+    if (wcslen(out) + wcslen(filename) + 1 > out_len) {
+        return -1;
+    }
+    wcscat(out, filename);
+    return 0;
+}
+
+static void append_line_to_boot_log(const char *line) {
+    wchar_t path[1024];
+    if (build_exe_sidecar_path_utf16(L"propagation_bot.log", path, sizeof(path) / sizeof(path[0])) != 0) {
+        wcscpy(path, L"propagation_bot.log");
+    }
+    FILE *fp = _wfopen(path, L"ab+");
+    if (!fp) {
+        return;
+    }
+    if (fseek(fp, 0, SEEK_END) == 0 && ftell(fp) == 0) {
+        static const unsigned char utf8_bom[] = {0xEF, 0xBB, 0xBF};
+        fwrite(utf8_bom, 1, sizeof(utf8_bom), fp);
+    }
+    fwrite(line, 1, strlen(line), fp);
+    fclose(fp);
+}
+
+static const char *windows_tz_env_value(const char *tz_name) {
+    if (!tz_name || !*tz_name) {
+        return NULL;
+    }
+    struct {
+        const char *name;
+        const char *value;
+    } aliases[] = {
+        {"Asia/Shanghai", "CST-8"},
+        {"Asia/Chongqing", "CST-8"},
+        {"Asia/Hong_Kong", "HKT-8"},
+        {"Asia/Singapore", "SGT-8"},
+        {"Asia/Tokyo", "JST-9"},
+        {"UTC", "UTC0"},
+        {"Etc/UTC", "UTC0"},
+        {"Etc/GMT", "GMT0"},
+        {"America/Los_Angeles", "PST8PDT,M3.2.0/2,M11.1.0/2"},
+        {"America/Denver", "MST7MDT,M3.2.0/2,M11.1.0/2"},
+        {"America/Chicago", "CST6CDT,M3.2.0/2,M11.1.0/2"},
+        {"America/New_York", "EST5EDT,M3.2.0/2,M11.1.0/2"},
+        {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0/2"},
+        {"Europe/Berlin", "CET-1CEST,M3.5.0/2,M10.5.0/3"},
+        {"Europe/Paris", "CET-1CEST,M3.5.0/2,M10.5.0/3"},
+    };
+    for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); ++i) {
+        if (strcmp(tz_name, aliases[i].name) == 0) {
+            return aliases[i].value;
+        }
+    }
+    return NULL;
+}
+#endif
+
 static size_t curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     memory_block_t *mem = (memory_block_t *)userp;
@@ -426,7 +538,14 @@ void apply_timezone(const char *tz_name) {
         return;
     }
 #ifdef _WIN32
-    _putenv_s("TZ", tz_name);
+    const char *env_value = windows_tz_env_value(tz_name);
+    if (!env_value) {
+        if (strchr(tz_name, '/')) {
+            return;
+        }
+        env_value = tz_name;
+    }
+    _putenv_s("TZ", env_value);
     _tzset();
 #else
     setenv("TZ", tz_name, 1);
@@ -453,15 +572,10 @@ void app_default_db_path(char *out, size_t out_len) {
         return;
     }
 #ifdef _WIN32
-    char exe_path[1024];
-    DWORD len = GetModuleFileNameA(NULL, exe_path, (DWORD)sizeof(exe_path));
-    if (len > 0 && len < sizeof(exe_path)) {
-        char *slash = strrchr(exe_path, '\\');
-        if (slash) {
-            slash[1] = '\0';
-            snprintf(out, out_len, "%spropagation.db", exe_path);
-            return;
-        }
+    wchar_t db_path[1024];
+    if (build_exe_sidecar_path_utf16(L"propagation.db", db_path, sizeof(db_path) / sizeof(db_path[0])) == 0 &&
+        utf16_to_utf8(db_path, out, out_len) == 0) {
+        return;
     }
 #endif
     copy_string(out, out_len, "./propagation.db");
@@ -480,6 +594,60 @@ void app_prepare_desktop_mode(int hide_console) {
     }
 #else
     (void)hide_console;
+#endif
+}
+
+void app_write_boot_log(const char *fmt, ...) {
+    char ts[64];
+    format_time_local(time(NULL), ts, sizeof(ts));
+
+    char message[MAX_LOG_TEXT];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    char line[MAX_LOG_TEXT + 96];
+    snprintf(line, sizeof(line), "[%s] %s\n", ts, message);
+
+#ifdef _WIN32
+    append_line_to_boot_log(line);
+#else
+    FILE *fp = fopen("propagation_bot.log", "ab");
+    if (fp) {
+        fwrite(line, 1, strlen(line), fp);
+        fclose(fp);
+    }
+#endif
+}
+
+void app_set_last_error(app_t *app, const char *fmt, ...) {
+    char message[MAX_LOG_TEXT];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    if (app) {
+        copy_string(app->last_error, sizeof(app->last_error), message);
+    }
+    app_write_boot_log("%s", message);
+}
+
+void app_show_startup_error(const char *title, const char *message) {
+#ifdef _WIN32
+    wchar_t wide_title[256];
+    wchar_t wide_message[2048];
+    if (app_windows_path_to_utf16(title ? title : "程序启动失败", wide_title, sizeof(wide_title) / sizeof(wide_title[0])) != 0) {
+        wcscpy(wide_title, L"程序启动失败");
+    }
+    if (app_windows_path_to_utf16(message ? message : "请查看 propagation_bot.log", wide_message, sizeof(wide_message) / sizeof(wide_message[0])) != 0) {
+        wcscpy(wide_message, L"请查看 propagation_bot.log");
+    }
+    MessageBoxW(NULL, wide_message, wide_title, MB_ICONERROR | MB_OK);
+#else
+    (void)title;
+    (void)message;
 #endif
 }
 
@@ -528,6 +696,7 @@ void app_log(app_t *app, const char *level, const char *fmt, ...) {
     char ts[64];
     format_time_local(time(NULL), ts, sizeof(ts));
     fprintf(stderr, "[%s] %s: %s\n", ts, level ? level : "INFO", message);
+    app_write_boot_log("%s: %s", level ? level : "INFO", message);
 
     if (!app || !app->db) {
         return;

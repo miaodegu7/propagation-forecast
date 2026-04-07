@@ -151,3 +151,13 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\install-startup-task.ps1
 - `logs/propagation-bot.stdout.log`
 - `logs/propagation-bot.stderr.log`
 - `logs/watchdog.log`
+
+如果你用的是单文件版 `propagation_bot_single.exe`，双击后打不开后台时，先看：
+
+- `exe` 同目录下的 `propagation_bot.log`
+
+常见原因：
+
+- `8080` 端口被别的软件占用
+- OneBot / NapCat 地址填错
+- 你把程序移动到了新目录，但计划任务或旧脚本还在指向旧路径
