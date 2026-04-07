@@ -22,7 +22,9 @@
 #define _WIN32_WINNT 0x0601
 #endif
 #include <winsock2.h>
+#include <windows.h>
 #include <ws2tcpip.h>
+#include <shellapi.h>
 #include <process.h>
 #include <io.h>
 #define strcasecmp _stricmp
@@ -411,6 +413,8 @@ typedef struct {
     rate_limit_entry_t rate_limits[MAX_RATE_LIMITS];
     int running;
     app_socket_t http_fd;
+    int open_admin_console_on_start;
+    int admin_console_opened;
 } app_t;
 
 typedef struct {
@@ -454,6 +458,9 @@ double haversine_km(double lat1, double lon1, double lat2, double lon2);
 int prefix_matches_grid(const char *grid, const char *prefix);
 void apply_timezone(const char *tz_name);
 void app_sleep_ms(int milliseconds);
+void app_default_db_path(char *out, size_t out_len);
+void app_prepare_desktop_mode(int hide_console);
+void app_open_admin_console(const settings_t *settings);
 int app_net_init(void);
 void app_net_cleanup(void);
 

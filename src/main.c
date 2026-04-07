@@ -64,11 +64,45 @@ static void *scheduler_thread(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    const char *db_path = argc > 1 ? argv[1] : "./propagation.db";
+    char default_db_path[1024];
+    app_default_db_path(default_db_path, sizeof(default_db_path));
+    const char *db_path = default_db_path;
+    int hide_console = 1;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--no-browser") == 0) {
+            continue;
+        }
+        if (strcmp(argv[i], "--show-console") == 0) {
+            hide_console = 0;
+            continue;
+        }
+        if (strcmp(argv[i], "--hide-console") == 0) {
+            hide_console = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--db") == 0 && i + 1 < argc) {
+            db_path = argv[++i];
+            continue;
+        }
+        if (argv[i][0] != '-') {
+            db_path = argv[i];
+        }
+    }
+
+    app_prepare_desktop_mode(hide_console);
+
     app_t app;
     memset(&app, 0, sizeof(app));
     app.running = 1;
     app.http_fd = APP_INVALID_SOCKET;
+    app.open_admin_console_on_start = 1;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--no-browser") == 0) {
+            app.open_admin_console_on_start = 0;
+        }
+    }
 
     pthread_mutex_init(&app.db_mutex, NULL);
     pthread_mutex_init(&app.cache_mutex, NULL);

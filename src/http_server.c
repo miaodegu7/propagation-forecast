@@ -939,6 +939,10 @@ int http_server_run(app_t *app) {
     }
     app->http_fd = fd;
     app_log(app, "INFO", "HTTP 后台已监听: %s:%d", app->settings.bind_addr, app->settings.http_port);
+    if (app->open_admin_console_on_start && !app->admin_console_opened) {
+        app_open_admin_console(&app->settings);
+        app->admin_console_opened = 1;
+    }
 
     while (app->running) {
         struct sockaddr_in client_addr;

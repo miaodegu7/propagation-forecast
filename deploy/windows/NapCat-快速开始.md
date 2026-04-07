@@ -6,7 +6,13 @@
 
 1. 一个专门用于机器人的 QQ 号
 2. 已安装并能登录的 `NapCat`
-3. 本程序的 `propagation_bot.exe`
+3. 本程序的 `propagation_bot.exe` 或单文件版 `propagation_bot_single.exe`
+
+如果你用的是单文件版：
+
+- 直接双击 `propagation_bot_single.exe`
+- 程序会自动在浏览器打开后台控制台
+- 默认数据库会放在 `exe` 同目录下
 
 ## 第一步：先启动程序生成数据库
 
@@ -108,6 +114,7 @@ deploy\windows\run-watchdog.bat
 - 拉起程序
 - 程序退出后自动重启
 - 把日志写到 `logs/`
+- 不会反复弹浏览器
 
 ## 第七步：改成登录后自动启动
 
@@ -125,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\install-startup-task.ps1
 
 ## 推荐运行顺序
 
-1. 先手动启动 `propagation_bot.exe`
+1. 先手动启动 `propagation_bot_single.exe` 或 `propagation_bot.exe`
 2. 打开后台完成配置
 3. 再启动 NapCat
 4. 做一次手动发送测试

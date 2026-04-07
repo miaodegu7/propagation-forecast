@@ -36,7 +36,7 @@ Write-WatchdogLog "看门狗启动，程序=$exe，数据库=$DbPath"
 while ($true) {
     Write-WatchdogLog "启动传播助手"
     $process = Start-Process -FilePath $exe `
-        -ArgumentList @($DbPath) `
+        -ArgumentList @("--no-browser", "--hide-console", $DbPath) `
         -WorkingDirectory $root `
         -RedirectStandardOutput $stdoutLog `
         -RedirectStandardError $stderrLog `

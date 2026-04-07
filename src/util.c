@@ -1,4 +1,5 @@
 #include "app.h"
+#include <locale.h>
 
 static size_t curl_write_cb(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
@@ -444,6 +445,61 @@ void app_sleep_ms(int milliseconds) {
     ts.tv_sec = milliseconds / 1000;
     ts.tv_nsec = (long)(milliseconds % 1000) * 1000000L;
     nanosleep(&ts, NULL);
+#endif
+}
+
+void app_default_db_path(char *out, size_t out_len) {
+    if (!out || out_len == 0) {
+        return;
+    }
+#ifdef _WIN32
+    char exe_path[1024];
+    DWORD len = GetModuleFileNameA(NULL, exe_path, (DWORD)sizeof(exe_path));
+    if (len > 0 && len < sizeof(exe_path)) {
+        char *slash = strrchr(exe_path, '\\');
+        if (slash) {
+            slash[1] = '\0';
+            snprintf(out, out_len, "%spropagation.db", exe_path);
+            return;
+        }
+    }
+#endif
+    copy_string(out, out_len, "./propagation.db");
+}
+
+void app_prepare_desktop_mode(int hide_console) {
+#ifdef _WIN32
+    setlocale(LC_ALL, ".UTF-8");
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    if (hide_console) {
+        HWND console = GetConsoleWindow();
+        if (console) {
+            ShowWindow(console, SW_HIDE);
+        }
+    }
+#else
+    (void)hide_console;
+#endif
+}
+
+void app_open_admin_console(const settings_t *settings) {
+#ifdef _WIN32
+    if (!settings) {
+        return;
+    }
+    char host[MAX_TEXT];
+    const char *bind_addr = settings->bind_addr[0] ? settings->bind_addr : "127.0.0.1";
+    if (strcmp(bind_addr, "0.0.0.0") == 0 || strcmp(bind_addr, "::") == 0 || strcmp(bind_addr, "*") == 0) {
+        bind_addr = "127.0.0.1";
+    }
+    copy_string(host, sizeof(host), bind_addr);
+
+    char url[512];
+    snprintf(url, sizeof(url), "http://%s:%d/", host, settings->http_port);
+    ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+#else
+    (void)settings;
 #endif
 }
 
