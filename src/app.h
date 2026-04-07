@@ -169,6 +169,8 @@ typedef struct {
 
     char meteor_source_url[MAX_LARGE_TEXT];
     int meteor_enabled;
+    char meteor_selected_showers[MAX_HUGE_TEXT];
+    int meteor_max_items;
 
     char satellite_source_url[MAX_LARGE_TEXT];
     char satellite_api_base[MAX_LARGE_TEXT];

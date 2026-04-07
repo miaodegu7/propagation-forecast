@@ -55,6 +55,32 @@ static int sixm_alert_level(const snapshot_t *snapshot, const settings_t *settin
     return 0;
 }
 
+static const char *meteor_fetch_status(const settings_t *settings, const meteor_data_t *meteor, int rc) {
+    if (rc != 0) {
+        return "fail";
+    }
+    if (!settings->meteor_enabled) {
+        return "skip";
+    }
+    if (meteor->shower_name[0]) {
+        return "ok";
+    }
+    return "empty";
+}
+
+static const char *satellite_fetch_status(const settings_t *settings, const satellite_summary_t *satellite, int rc) {
+    if (rc != 0) {
+        return "fail";
+    }
+    if (!settings->satellite_enabled || !settings->satellite_api_base[0] || !settings->satellite_api_key[0]) {
+        return "skip";
+    }
+    if (satellite->pass_count > 0) {
+        return "ok";
+    }
+    return "empty";
+}
+
 static void ensure_poll_state(poll_state_t *state, int interval_seconds, time_t now) {
     interval_seconds = clamp_int(interval_seconds, 1, 365 * 24 * 3600);
     if (state->interval_seconds > 0 && state->interval_seconds != interval_seconds && state->next_due > now) {
@@ -248,8 +274,8 @@ int app_force_refresh(app_t *app) {
         ham_rc == 0 ? "ok" : "fail",
         weather_rc == 0 ? "ok" : "fail",
         tropo_rc == 0 ? "ok" : "fail",
-        meteor_rc == 0 ? "ok" : "fail",
-        satellite_rc == 0 ? "ok" : "fail",
+        meteor_fetch_status(&settings, &meteor, meteor_rc),
+        satellite_fetch_status(&settings, &satellite, satellite_rc),
         next_snapshot.psk.local_spots_60m);
 
     pthread_mutex_unlock(&app->refresh_mutex);

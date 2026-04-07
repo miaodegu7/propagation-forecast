@@ -154,6 +154,7 @@ int main(int argc, char **argv) {
     pthread_create(&scheduler, NULL, scheduler_thread, &app);
 
     int server_rc = http_server_run(&app);
+    app_log(&app, server_rc == 0 ? "WARN" : "ERROR", "HTTP 服务主循环结束，server_rc=%d", server_rc);
     if (server_rc != 0 && hide_console && !app.admin_console_opened) {
         char message[1024];
         snprintf(message, sizeof(message), "%s\n\n请查看同目录下的 propagation_bot.log",

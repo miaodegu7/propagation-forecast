@@ -108,6 +108,8 @@ static int seed_defaults(sqlite3 *db) {
         {"tropo_send_image", "1"},
         {"meteor_source_url", "https://www.imo.net/"},
         {"meteor_enabled", "1"},
+        {"meteor_selected_showers", ""},
+        {"meteor_max_items", "3"},
         {"satellite_source_url", "https://api.n2yo.com/rest/v1/satellite/"},
         {"satellite_api_base", "https://api.n2yo.com/rest/v1/satellite/"},
         {"satellite_api_key", ""},
@@ -307,6 +309,8 @@ int storage_load_settings(app_t *app, settings_t *out) {
 
     load_text_or_default(app->db, "meteor_source_url", out->meteor_source_url, sizeof(out->meteor_source_url), "https://www.imo.net/");
     out->meteor_enabled = load_int_or_default(app->db, "meteor_enabled", 1);
+    load_text_or_default(app->db, "meteor_selected_showers", out->meteor_selected_showers, sizeof(out->meteor_selected_showers), "");
+    out->meteor_max_items = load_int_or_default(app->db, "meteor_max_items", 3);
 
     load_text_or_default(app->db, "satellite_source_url", out->satellite_source_url, sizeof(out->satellite_source_url), "https://api.n2yo.com/rest/v1/satellite/");
     load_text_or_default(app->db, "satellite_api_base", out->satellite_api_base, sizeof(out->satellite_api_base), "https://api.n2yo.com/rest/v1/satellite/");
@@ -346,6 +350,7 @@ int storage_load_settings(app_t *app, settings_t *out) {
     out->weather_interval_minutes = clamp_int(out->weather_interval_minutes, 5, 1440);
     out->tropo_interval_minutes = clamp_int(out->tropo_interval_minutes, 5, 1440);
     out->meteor_interval_hours = clamp_int(out->meteor_interval_hours, 1, 168);
+    out->meteor_max_items = clamp_int(out->meteor_max_items, 1, 8);
     out->satellite_interval_hours = clamp_int(out->satellite_interval_hours, 1, 168);
     out->psk_eval_interval_seconds = clamp_int(out->psk_eval_interval_seconds, 15, 3600);
     out->snapshot_rebuild_seconds = clamp_int(out->snapshot_rebuild_seconds, 15, 3600);

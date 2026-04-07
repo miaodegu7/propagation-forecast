@@ -371,7 +371,7 @@ static void save_settings_from_form(app_t *app, const char *body) {
         "geomag_alert_enabled", "geomag_alert_threshold_g",
         "sixm_alert_enabled", "sixm_alert_interval_minutes", "sixm_psk_trigger_spots",
         "tropo_source_url", "tropo_forecast_hours", "tropo_send_image",
-        "meteor_source_url", "meteor_enabled",
+        "meteor_source_url", "meteor_enabled", "meteor_selected_showers", "meteor_max_items",
         "satellite_source_url", "satellite_api_base", "satellite_api_key", "satellite_enabled",
         "satellite_days", "satellite_min_elevation", "satellite_window_start", "satellite_window_end",
         "satellite_mode_filter", "satellite_max_items",
@@ -564,6 +564,8 @@ static char *render_dashboard(app_t *app) {
     append_select_yesno(&page, "tropo_send_image", "发送 Tropo 图", settings.tropo_send_image);
     append_input(&page, "meteor_source_url", "流星雨来源", settings.meteor_source_url, "text");
     append_select_yesno(&page, "meteor_enabled", "流星雨提醒", settings.meteor_enabled);
+    append_input(&page, "meteor_selected_showers", "流星雨筛选(csv)", settings.meteor_selected_showers, "text");
+    append_input_int(&page, "meteor_max_items", "流星雨最多条数", settings.meteor_max_items);
     append_input(&page, "hamqsl_widget_url", "HAMqsl 小组件图", settings.hamqsl_widget_url, "text");
     append_select_yesno(&page, "include_hamqsl_widget", "发送 HAMqsl 图", settings.include_hamqsl_widget);
     append_select_yesno(&page, "include_source_urls", "附带来源网址", settings.include_source_urls);
@@ -953,9 +955,18 @@ int http_server_run(app_t *app) {
         socklen_t client_len = sizeof(client_addr);
         app_socket_t client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd == APP_INVALID_SOCKET) {
+#ifdef _WIN32
+            int accept_error = WSAGetLastError();
+            if (accept_error == WSAEINTR) {
+                continue;
+            }
+            app_set_last_error(app, "HTTP accept 失败，错误码=%d", accept_error);
+            app_log(app, "ERROR", "HTTP accept 失败，错误码=%d", accept_error);
+#else
             if (errno == EINTR) {
                 continue;
             }
+#endif
             break;
         }
         client_ctx_t *ctx = calloc(1, sizeof(*ctx));
@@ -973,6 +984,7 @@ int http_server_run(app_t *app) {
             free(ctx);
         }
     }
+    app_log(app, "WARN", "HTTP 后台循环已退出");
     close(fd);
     return 0;
 }

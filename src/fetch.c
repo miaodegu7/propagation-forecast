@@ -23,6 +23,13 @@ typedef struct {
     int score;
 } tropo_palette_t;
 
+typedef struct {
+    char name[MAX_TEXT];
+    char peak_label[MAX_TEXT];
+    int moon_percent;
+    int days_left;
+} meteor_candidate_t;
+
 static int extract_tag_text(const char *xml, const char *tag, char *out, size_t out_len) {
     char open_tag[64];
     char close_tag[64];
@@ -320,6 +327,206 @@ static void strip_tags_inplace(char *text) {
     }
     *dst = '\0';
     trim_whitespace(text);
+}
+
+static int parse_calendar_peak_date(const char *text, struct tm *tm_out) {
+    char month_text[8];
+    int day1 = 0;
+    int day2 = 0;
+    int year = 0;
+    int day = 0;
+
+    if (sscanf(text, "%7s %d-%d, %d", month_text, &day1, &day2, &year) == 4 ||
+        sscanf(text, "%7s %d-%d %d", month_text, &day1, &day2, &year) == 4) {
+        day = day2;
+    } else if (sscanf(text, "%7s %d, %d", month_text, &day1, &year) == 3 ||
+               sscanf(text, "%7s %d %d", month_text, &day1, &year) == 3) {
+        day = day1;
+    } else {
+        return -1;
+    }
+
+    int month = parse_month_abbr(month_text);
+    if (month < 0) {
+        return -1;
+    }
+
+    memset(tm_out, 0, sizeof(*tm_out));
+    tm_out->tm_year = year - 1900;
+    tm_out->tm_mon = month;
+    tm_out->tm_mday = day;
+    tm_out->tm_hour = 12;
+    return 0;
+}
+
+static int meteor_days_left_from_peak(const char *peak_label) {
+    struct tm peak_tm;
+    if (parse_calendar_peak_date(peak_label, &peak_tm) != 0 &&
+        parse_peak_date(peak_label, &peak_tm) != 0) {
+        return -1;
+    }
+    time_t peak_time = mktime(&peak_tm);
+    time_t now = time(NULL);
+    return (int)floor(difftime(peak_time, now) / 86400.0 + 0.5);
+}
+
+static int meteor_matches_filter(const char *name, const char *filter_csv) {
+    if (!filter_csv || !*filter_csv) {
+        return 1;
+    }
+    char temp[MAX_HUGE_TEXT];
+    copy_string(temp, sizeof(temp), filter_csv);
+    char *save = NULL;
+    for (char *part = strtok_r(temp, ",|/\t\r\n", &save); part; part = strtok_r(NULL, ",|/\t\r\n", &save)) {
+        trim_whitespace(part);
+        if (*part && string_contains_ci(name, part)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int cmp_meteor_candidates(const void *a, const void *b) {
+    const meteor_candidate_t *ma = (const meteor_candidate_t *)a;
+    const meteor_candidate_t *mb = (const meteor_candidate_t *)b;
+    int da = ma->days_left < 0 ? INT_MAX / 2 : ma->days_left;
+    int db = mb->days_left < 0 ? INT_MAX / 2 : mb->days_left;
+    if (da != db) {
+        return da - db;
+    }
+    return strcasecmp(ma->name, mb->name);
+}
+
+static int parse_meteor_calendar_candidates(const char *html, meteor_candidate_t *items, int max_items) {
+    int count = 0;
+    const char *p = html;
+    const char *marker = "<div class=\"shower media\"";
+    while ((p = strstr(p, marker)) != NULL && count < max_items) {
+        const char *next = strstr(p + strlen(marker), marker);
+        size_t block_len = next ? (size_t)(next - p) : strlen(p);
+        if (block_len >= 32768) {
+            block_len = 32767;
+        }
+        char block[32768];
+        memcpy(block, p, block_len);
+        block[block_len] = '\0';
+
+        meteor_candidate_t item;
+        memset(&item, 0, sizeof(item));
+
+        const char *name = strstr(block, "class=\"media-heading\"");
+        if (name) {
+            name = strchr(name, '>');
+            if (name) {
+                const char *end = strchr(name + 1, '<');
+                if (end && end > name + 1) {
+                    size_t len = (size_t)(end - (name + 1));
+                    if (len >= sizeof(item.name)) {
+                        len = sizeof(item.name) - 1;
+                    }
+                    memcpy(item.name, name + 1, len);
+                    item.name[len] = '\0';
+                    strip_tags_inplace(item.name);
+                    char *paren = strchr(item.name, '(');
+                    if (paren) {
+                        *paren = '\0';
+                        trim_whitespace(item.name);
+                    }
+                }
+            }
+        }
+
+        const char *peak = strstr(block, "will next peak on the ");
+        if (peak) {
+            peak += strlen("will next peak on the ");
+            const char *end = strstr(peak, " night");
+            if (!end) {
+                end = strchr(peak, '.');
+            }
+            if (end && end > peak) {
+                size_t len = (size_t)(end - peak);
+                if (len >= sizeof(item.peak_label)) {
+                    len = sizeof(item.peak_label) - 1;
+                }
+                memcpy(item.peak_label, peak, len);
+                item.peak_label[len] = '\0';
+                trim_whitespace(item.peak_label);
+            }
+        }
+
+        const char *moon = strstr(block, "moon will be ");
+        if (moon) {
+            moon += strlen("moon will be ");
+            item.moon_percent = atoi(moon);
+        }
+
+        if (item.name[0] && item.peak_label[0]) {
+            item.days_left = meteor_days_left_from_peak(item.peak_label);
+            items[count++] = item;
+        }
+
+        if (!next) {
+            break;
+        }
+        p = next;
+    }
+    return count;
+}
+
+static int parse_meteor_widget_candidate(const char *html, meteor_candidate_t *item) {
+    const char *widget = strstr(html, "widget meteor-shower-widget");
+    if (!widget || !item) {
+        return -1;
+    }
+
+    memset(item, 0, sizeof(*item));
+
+    const char *name_a = strstr(widget, "class=\"shower_t\"");
+    if (name_a) {
+        name_a = strchr(name_a, '>');
+        if (name_a) {
+            const char *name_end = strstr(name_a + 1, "</a>");
+            if (name_end && name_end > name_a + 1) {
+                size_t len = (size_t)(name_end - (name_a + 1));
+                if (len >= sizeof(item->name)) {
+                    len = sizeof(item->name) - 1;
+                }
+                memcpy(item->name, name_a + 1, len);
+                item->name[len] = '\0';
+                strip_tags_inplace(item->name);
+            }
+        }
+    }
+
+    const char *peak = strstr(widget, "Peak Night:</strong>");
+    if (peak) {
+        peak += strlen("Peak Night:</strong>");
+        while (*peak && isspace((unsigned char)*peak)) {
+            peak++;
+        }
+        const char *end = strchr(peak, '.');
+        if (end && end > peak) {
+            size_t len = (size_t)(end - peak);
+            if (len >= sizeof(item->peak_label)) {
+                len = sizeof(item->peak_label) - 1;
+            }
+            memcpy(item->peak_label, peak, len);
+            item->peak_label[len] = '\0';
+            trim_whitespace(item->peak_label);
+        }
+    }
+
+    const char *moon = strstr(widget, "moon will be <strong>");
+    if (moon) {
+        moon += strlen("moon will be <strong>");
+        item->moon_percent = atoi(moon);
+    }
+
+    if (!item->name[0] || !item->peak_label[0]) {
+        return -1;
+    }
+    item->days_left = meteor_days_left_from_peak(item->peak_label);
+    return 0;
 }
 
 static int ham_field_enabled(const settings_t *settings, const char *field_name) {
@@ -783,70 +990,74 @@ int fetch_meteor_data(const settings_t *settings, meteor_data_t *out) {
         return -1;
     }
 
-    const char *widget = strstr(html, "widget meteor-shower-widget");
-    if (!widget) {
-        free(html);
-        return -1;
-    }
-    const char *name_a = strstr(widget, "class=\"shower_t\"");
-    if (name_a) {
-        name_a = strchr(name_a, '>');
-        if (name_a) {
-            const char *name_end = strstr(name_a + 1, "</a>");
-            if (name_end) {
-                size_t len = (size_t)(name_end - (name_a + 1));
-                if (len >= sizeof(out->shower_name)) len = sizeof(out->shower_name) - 1;
-                memcpy(out->shower_name, name_a + 1, len);
-                out->shower_name[len] = '\0';
-                strip_tags_inplace(out->shower_name);
-            }
-        }
-    }
-    const char *peak = strstr(widget, "Peak Night:</strong>");
-    if (peak) {
-        peak += strlen("Peak Night:</strong>");
-        while (*peak && isspace((unsigned char)*peak)) peak++;
-        const char *end = strchr(peak, '.');
-        if (end) {
-            size_t len = (size_t)(end - peak);
-            if (len >= sizeof(out->peak_label)) len = sizeof(out->peak_label) - 1;
-            memcpy(out->peak_label, peak, len);
-            out->peak_label[len] = '\0';
-            trim_whitespace(out->peak_label);
-        }
-    }
-    const char *moon = strstr(widget, "moon will be <strong>");
-    if (moon) {
-        moon += strlen("moon will be <strong>");
-        out->moon_percent = atoi(moon);
-    }
-
-    if (out->peak_label[0]) {
-        struct tm peak_tm;
-        if (parse_peak_date(out->peak_label, &peak_tm) == 0) {
-            time_t peak_time = mktime(&peak_tm);
-            time_t now = time(NULL);
-            out->days_left = (int)floor(difftime(peak_time, now) / 86400.0 + 0.5);
-        } else {
-            out->days_left = -1;
-        }
-    } else {
-        out->days_left = -1;
-    }
-
-    copy_string(out->source_url, sizeof(out->source_url), url);
-    out->valid = out->shower_name[0] && out->peak_label[0];
-    if (out->valid) {
-        if (out->days_left >= 0) {
-            snprintf(out->summary, sizeof(out->summary), "最近主要流星雨：%s，峰值夜 %s，距今约 %d 天，月相约 %d%%。",
-                out->shower_name, out->peak_label, out->days_left, out->moon_percent);
-        } else {
-            snprintf(out->summary, sizeof(out->summary), "最近主要流星雨：%s，峰值夜 %s，月相约 %d%%。",
-                out->shower_name, out->peak_label, out->moon_percent);
+    meteor_candidate_t candidates[32];
+    int candidate_count = parse_meteor_calendar_candidates(html, candidates, 32);
+    if (candidate_count <= 0) {
+        meteor_candidate_t item;
+        if (parse_meteor_widget_candidate(html, &item) == 0) {
+            candidates[0] = item;
+            candidate_count = 1;
         }
     }
     free(html);
-    return out->valid ? 0 : -1;
+
+    if (candidate_count <= 0) {
+        return -1;
+    }
+
+    qsort(candidates, (size_t)candidate_count, sizeof(candidates[0]), cmp_meteor_candidates);
+
+    meteor_candidate_t selected[8];
+    int selected_count = 0;
+    int max_items = clamp_int(settings->meteor_max_items, 1, 8);
+    for (int i = 0; i < candidate_count && selected_count < max_items; ++i) {
+        if (!meteor_matches_filter(candidates[i].name, settings->meteor_selected_showers)) {
+            continue;
+        }
+        selected[selected_count++] = candidates[i];
+    }
+
+    copy_string(out->source_url, sizeof(out->source_url), url);
+    out->valid = 1;
+
+    if (selected_count == 0) {
+        if (settings->meteor_selected_showers[0]) {
+            snprintf(out->summary, sizeof(out->summary),
+                "流星雨日历已获取，但没有匹配到筛选项：%s。",
+                settings->meteor_selected_showers);
+        } else {
+            copy_string(out->summary, sizeof(out->summary), "流星雨日历已获取，但没有找到可用条目。");
+        }
+        return 0;
+    }
+
+    copy_string(out->shower_name, sizeof(out->shower_name), selected[0].name);
+    copy_string(out->peak_label, sizeof(out->peak_label), selected[0].peak_label);
+    out->moon_percent = selected[0].moon_percent;
+    out->days_left = selected[0].days_left;
+
+    sb_t sb;
+    sb_init(&sb);
+    if (settings->meteor_selected_showers[0]) {
+        sb_appendf(&sb, "已筛选流星雨 %d 项：", selected_count);
+    } else {
+        sb_appendf(&sb, "近期主要流星雨 %d 项：", selected_count);
+    }
+    for (int i = 0; i < selected_count; ++i) {
+        if (i > 0) {
+            sb_append(&sb, "；");
+        }
+        if (selected[i].days_left >= 0) {
+            sb_appendf(&sb, "%s（%s，距今约 %d 天，月相约 %d%%）",
+                selected[i].name, selected[i].peak_label, selected[i].days_left, selected[i].moon_percent);
+        } else {
+            sb_appendf(&sb, "%s（%s，月相约 %d%%）",
+                selected[i].name, selected[i].peak_label, selected[i].moon_percent);
+        }
+    }
+    copy_string(out->summary, sizeof(out->summary), sb.data ? sb.data : "");
+    sb_free(&sb);
+    return 0;
 }
 
 int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, app_t *app) {
@@ -1062,6 +1273,10 @@ static void build_solar_section(const hamqsl_data_t *ham, char *summary, size_t 
 static void build_meteor_section(const meteor_data_t *meteor, char *out, size_t out_len) {
     if (!meteor->valid) {
         copy_string(out, out_len, "流星雨倒计时暂不可用。");
+        return;
+    }
+    if (meteor->summary[0]) {
+        copy_string(out, out_len, meteor->summary);
         return;
     }
     if (meteor->days_left >= 0) {

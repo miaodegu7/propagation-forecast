@@ -386,6 +386,20 @@ static void curl_global_once(void) {
     pthread_mutex_unlock(&once_mutex);
 }
 
+#ifdef _WIN32
+static void configure_curl_ssl(CURL *curl) {
+#ifdef CURLSSLOPT_NATIVE_CA
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+#else
+    (void)curl;
+#endif
+}
+#else
+static void configure_curl_ssl(CURL *curl) {
+    (void)curl;
+}
+#endif
+
 static char *http_request_common(const char *url, const char *bearer_token, const char *json_body, long *status_code, size_t *out_size) {
     curl_global_once();
     CURL *curl = curl_easy_init();
@@ -395,6 +409,8 @@ static char *http_request_common(const char *url, const char *bearer_token, cons
 
     memory_block_t mem = {0};
     struct curl_slist *headers = NULL;
+    char error_buffer[CURL_ERROR_SIZE];
+    memset(error_buffer, 0, sizeof(error_buffer));
     headers = curl_slist_append(headers, "User-Agent: PropagationForecastBot/0.1");
     headers = curl_slist_append(headers, "Accept: application/json, text/plain, */*");
     if (json_body) {
@@ -413,6 +429,8 @@ static char *http_request_common(const char *url, const char *bearer_token, cons
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &mem);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    configure_curl_ssl(curl);
     if (json_body) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
@@ -432,6 +450,9 @@ static char *http_request_common(const char *url, const char *bearer_token, cons
     curl_easy_cleanup(curl);
 
     if (rc != CURLE_OK) {
+        app_write_boot_log("HTTP 请求失败: %s (%s)",
+            url ? url : "(null)",
+            error_buffer[0] ? error_buffer : curl_easy_strerror(rc));
         free(mem.data);
         return NULL;
     }
