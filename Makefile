@@ -13,7 +13,7 @@ OBJ := $(SRC:.c=.o)
 TARGET ?= propagation_bot$(EXEEXT)
 
 PKG_CONFIG_MODE := $(if $(filter 1,$(STATIC)),--static,)
-PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKG_DEPS) 2>/dev/null)
+PKG_CFLAGS := $(shell $(PKG_CONFIG) $(PKG_CONFIG_MODE) --cflags $(PKG_DEPS) 2>/dev/null)
 PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKG_CONFIG_MODE) $(PKG_DEPS) 2>/dev/null)
 
 ifeq ($(strip $(PKG_LIBS)),)
