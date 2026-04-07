@@ -101,11 +101,11 @@ make
 
 如果你准备按“更像真人 QQ”长期挂着跑，建议继续使用 `NapCat / OneBot`，并配合仓库里的 Windows 看门狗脚本：
 
-- [Windows 常驻脚本说明](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/README.md)
-- [NapCat 快速开始](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/NapCat-%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B.md)
-- [run-watchdog.bat](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/run-watchdog.bat)
-- [watchdog.ps1](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/watchdog.ps1)
-- [install-startup-task.ps1](C:/Users/miaod/Desktop/propagation%20forecast/deploy/windows/install-startup-task.ps1)
+- [Windows 常驻脚本说明](deploy/windows/README.md)
+- [NapCat 快速开始](deploy/windows/NapCat-快速开始.md)
+- [run-watchdog.bat](deploy/windows/run-watchdog.bat)
+- [watchdog.ps1](deploy/windows/watchdog.ps1)
+- [install-startup-task.ps1](deploy/windows/install-startup-task.ps1)
 
 ## 数据说明
 
