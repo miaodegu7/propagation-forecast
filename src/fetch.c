@@ -329,6 +329,19 @@ static void strip_tags_inplace(char *text) {
     trim_whitespace(text);
 }
 
+static void append_csv_value(char *csv, size_t csv_len, const char *value) {
+    if (!csv || csv_len == 0 || !value || !*value) {
+        return;
+    }
+    if (csv_contains_ci(csv, value)) {
+        return;
+    }
+    if (csv[0]) {
+        strncat(csv, ", ", csv_len - strlen(csv) - 1);
+    }
+    strncat(csv, value, csv_len - strlen(csv) - 1);
+}
+
 static int parse_calendar_peak_date(const char *text, struct tm *tm_out) {
     char month_text[8];
     int day1 = 0;
@@ -1062,34 +1075,65 @@ int fetch_meteor_data(const settings_t *settings, meteor_data_t *out) {
 
 int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, app_t *app) {
     memset(out, 0, sizeof(*out));
+    out->enabled = settings->satellite_enabled;
+    out->api_configured = settings->satellite_api_base[0] && settings->satellite_api_key[0];
     copy_string(out->source_url, sizeof(out->source_url),
         settings->satellite_source_url[0] ? settings->satellite_source_url : settings->satellite_api_base);
-
-    if (!settings->satellite_enabled) {
-        copy_string(out->summary, sizeof(out->summary), "卫星推荐已关闭。");
-        out->valid = 1;
-        return 0;
-    }
-    if (!settings->satellite_api_base[0] || !settings->satellite_api_key[0]) {
-        copy_string(out->summary, sizeof(out->summary), "卫星推荐未启用：请在后台填写 N2YO API 地址与 API Key。");
-        out->valid = 1;
-        return 0;
-    }
 
     satellite_t satellites[MAX_SATELLITES];
     int sat_count = 0;
     storage_load_satellites(app, satellites, MAX_SATELLITES, &sat_count);
+    out->total_satellites = sat_count;
+    for (int i = 0; i < sat_count; ++i) {
+        if (satellites[i].enabled) {
+            out->enabled_satellites++;
+        }
+        if (satellites[i].enabled && satellite_mode_allowed(&satellites[i], settings)) {
+            out->selected_satellites++;
+            append_csv_value(out->selected_names, sizeof(out->selected_names), satellites[i].name);
+        }
+    }
+
+    if (!settings->satellite_enabled) {
+        copy_string(out->api_status, sizeof(out->api_status), "已关闭");
+        snprintf(out->summary, sizeof(out->summary),
+            "卫星推荐已关闭。当前共配置 %d 颗卫星，启用 %d 颗。",
+            out->total_satellites, out->enabled_satellites);
+        out->valid = 1;
+        return 0;
+    }
+    if (out->selected_satellites == 0) {
+        copy_string(out->api_status, sizeof(out->api_status), "未选择");
+        copy_string(out->summary, sizeof(out->summary), "当前没有启用且符合筛选条件的卫星，请先在后台勾选卫星。");
+        out->valid = 1;
+        return 0;
+    }
+    if (!out->api_configured) {
+        copy_string(out->api_status, sizeof(out->api_status), "未配置");
+        snprintf(out->summary, sizeof(out->summary),
+            "已选择 %d 颗卫星，但未填写 N2YO API 地址或 API Key。",
+            out->selected_satellites);
+        out->valid = 1;
+        return 0;
+    }
+
+    double latitude = settings->latitude;
+    double longitude = settings->longitude;
+    if ((latitude == 0.0 && longitude == 0.0) && settings->station_grid[0]) {
+        grid_to_latlon(settings->station_grid, &latitude, &longitude);
+    }
 
     for (int i = 0; i < sat_count && out->pass_count < settings->satellite_max_items; ++i) {
         if (!satellites[i].enabled || !satellite_mode_allowed(&satellites[i], settings)) {
             continue;
         }
+        out->api_requests++;
         char url[1024];
         snprintf(url, sizeof(url), "%sradiopasses/%d/%.6f/%.6f/%.1f/%d/%d/&apiKey=%s",
             settings->satellite_api_base,
             satellites[i].norad_id,
-            settings->latitude,
-            settings->longitude,
+            latitude,
+            longitude,
             settings->altitude_m,
             settings->satellite_days,
             settings->satellite_min_elevation,
@@ -1100,6 +1144,7 @@ int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, a
             free(json);
             continue;
         }
+        out->api_successes++;
         char passes[32768];
         if (extract_json_array(json, "passes", passes, sizeof(passes)) == 0) {
             const char *p = passes;
@@ -1145,10 +1190,24 @@ int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, a
 
     sb_t sb;
     sb_init(&sb);
-    if (out->pass_count == 0) {
-        sb_append(&sb, "今日筛选窗口内暂无符合条件的卫星过境。");
+    if (out->api_successes == 0 && out->api_requests > 0) {
+        copy_string(out->api_status, sizeof(out->api_status), "接口异常");
+        sb_appendf(&sb, "已选择 %d 颗卫星，但卫星 API 暂未返回可用数据。",
+            out->selected_satellites);
+    } else if (out->api_successes < out->api_requests) {
+        copy_string(out->api_status, sizeof(out->api_status), "部分成功");
+        sb_appendf(&sb, "已选择 %d 颗卫星，API 成功 %d/%d 次。",
+            out->selected_satellites, out->api_successes, out->api_requests);
     } else {
-        sb_appendf(&sb, "推荐卫星过境 %d 条：", out->pass_count);
+        copy_string(out->api_status, sizeof(out->api_status), "正常");
+        sb_appendf(&sb, "已选择 %d 颗卫星，API 成功 %d/%d 次。",
+            out->selected_satellites, out->api_successes, out->api_requests);
+    }
+
+    if (out->pass_count == 0) {
+        sb_append(&sb, "\n今日筛选窗口内暂无符合条件的卫星过境。");
+    } else {
+        sb_appendf(&sb, "\n今日筛选后命中 %d 条过境：", out->pass_count);
         for (int i = 0; i < out->pass_count; ++i) {
             sb_appendf(&sb, "%s%s %s，最大仰角 %.0f°",
                 i == 0 ? "\n" : "\n",

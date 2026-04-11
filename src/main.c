@@ -5,6 +5,7 @@ static app_t *g_app = NULL;
 
 static void handle_signal(int signo) {
     if (g_app) {
+        app_write_boot_log("收到系统信号: %d", signo);
         g_app->running = 0;
         if (g_app->http_fd != APP_INVALID_SOCKET) {
             shutdown(g_app->http_fd, SHUT_RDWR);

@@ -339,6 +339,15 @@ typedef struct {
 
 typedef struct {
     int valid;
+    int enabled;
+    int api_configured;
+    int total_satellites;
+    int enabled_satellites;
+    int selected_satellites;
+    int api_requests;
+    int api_successes;
+    char api_status[MAX_TEXT];
+    char selected_names[MAX_HUGE_TEXT];
     char source_url[MAX_LARGE_TEXT];
     char summary[MAX_LARGE_TEXT];
     satellite_pass_t passes[MAX_PASSES];

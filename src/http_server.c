@@ -352,6 +352,27 @@ static void render_satellite_table(app_t *app, sb_t *html) {
     }
 }
 
+static void render_satellite_pass_rows(const satellite_summary_t *satellite, sb_t *html) {
+    if (!satellite || satellite->pass_count == 0) {
+        sb_append(html, "<tr><td colspan=\"5\">今日筛选窗口内暂无符合条件的过境</td></tr>");
+        return;
+    }
+    for (int i = 0; i < satellite->pass_count; ++i) {
+        sb_append(html, "<tr>");
+        sb_append(html, "<td>");
+        html_escape_to_sb(html, satellite->passes[i].name);
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, satellite->passes[i].mode_type);
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, satellite->passes[i].start_local);
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, satellite->passes[i].max_local);
+        sb_append(html, "</td><td>");
+        sb_appendf(html, "%.0f°", satellite->passes[i].max_elevation);
+        sb_append(html, "</td></tr>");
+    }
+}
+
 static void save_form_setting(app_t *app, const char *body, const char *key) {
     char value[16384];
     if (get_form_value(body, key, value, sizeof(value)) == 0) {
@@ -493,7 +514,7 @@ static char *render_dashboard(app_t *app) {
     sb_appendf(&page,
         "<section class=\"hero\"><h1>%s</h1><p>台站 %s / %s / 时区 %s</p>"
         "<p>OneBot 回调地址：<code>/api/onebot?token=%s</code></p>"
-        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span></p></section>",
+        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span><span class=\"pill\">卫星 %s / %d 条</span></p></section>",
         settings.bot_name[0] ? settings.bot_name : APP_NAME,
         settings.station_name,
         settings.station_grid,
@@ -501,7 +522,9 @@ static char *render_dashboard(app_t *app) {
         settings.onebot_webhook_token,
         snapshot.psk.assessment,
         snapshot.sun_summary,
-        snapshot.meteor.valid ? snapshot.meteor.shower_name : "未获取");
+        snapshot.meteor.valid ? snapshot.meteor.shower_name : "未获取",
+        snapshot.satellite.valid ? snapshot.satellite.api_status : "未获取",
+        snapshot.satellite.valid ? snapshot.satellite.pass_count : 0);
 
     sb_append(&page, "<div class=\"grid\">");
     sb_append(&page, "<section class=\"card\"><h2>当前分析</h2><p>");
@@ -635,6 +658,31 @@ static char *render_dashboard(app_t *app) {
 
     sb_append(&page, "<section class=\"card\"><h2>最近 6m Spot</h2><table><tr><th>时间</th><th>命中网格</th><th>发送方</th><th>接收方</th><th>模式</th><th>SNR</th><th>距离</th></tr>");
     sb_append(&page, recent_spots.data ? recent_spots.data : "");
+    sb_append(&page, "</table></section>");
+    sb_append(&page, "</div>");
+
+    sb_append(&page, "<div class=\"grid\">");
+    sb_append(&page, "<section class=\"card\"><h2>卫星状态</h2><p>");
+    sb_appendf(&page,
+        "<span class=\"pill\">API %s</span><span class=\"pill\">已选 %d 颗</span><span class=\"pill\">命中 %d 条</span>",
+        snapshot.satellite.valid ? snapshot.satellite.api_status : "未获取",
+        snapshot.satellite.valid ? snapshot.satellite.selected_satellites : 0,
+        snapshot.satellite.valid ? snapshot.satellite.pass_count : 0);
+    sb_append(&page, "</p><table>");
+    sb_appendf(&page, "<tr><th>总配置</th><td>%d</td><th>已启用</th><td>%d</td></tr>",
+        snapshot.satellite.total_satellites, snapshot.satellite.enabled_satellites);
+    sb_appendf(&page, "<tr><th>参与计算</th><td>%d</td><th>API 成功</th><td>%d / %d</td></tr>",
+        snapshot.satellite.selected_satellites, snapshot.satellite.api_successes, snapshot.satellite.api_requests);
+    sb_appendf(&page, "<tr><th>时间窗</th><td>%s - %s</td><th>最低仰角</th><td>%d°</td></tr>",
+        settings.satellite_window_start, settings.satellite_window_end, settings.satellite_min_elevation);
+    sb_append(&page, "</table><p class=\"help\">已选卫星：");
+    html_escape_to_sb(&page, snapshot.satellite.selected_names[0] ? snapshot.satellite.selected_names : "未选择");
+    sb_append(&page, "</p><pre>");
+    html_escape_to_sb(&page, snapshot.satellite.summary[0] ? snapshot.satellite.summary : "卫星状态暂不可用。");
+    sb_append(&page, "</pre></section>");
+
+    sb_append(&page, "<section class=\"card\"><h2>今日卫星过境</h2><table><tr><th>名称</th><th>模式</th><th>开始</th><th>最大时刻</th><th>最大仰角</th></tr>");
+    render_satellite_pass_rows(&snapshot.satellite, &page);
     sb_append(&page, "</table></section>");
     sb_append(&page, "</div>");
 
@@ -915,6 +963,7 @@ static void *client_thread(void *arg) {
 
 int http_server_run(app_t *app) {
     app_socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    int exit_reason = 0;
     if (fd == APP_INVALID_SOCKET) {
         return -1;
     }
@@ -958,14 +1007,18 @@ int http_server_run(app_t *app) {
 #ifdef _WIN32
             int accept_error = WSAGetLastError();
             if (accept_error == WSAEINTR) {
+                exit_reason = 1;
                 continue;
             }
             app_set_last_error(app, "HTTP accept 失败，错误码=%d", accept_error);
             app_log(app, "ERROR", "HTTP accept 失败，错误码=%d", accept_error);
+            exit_reason = accept_error;
 #else
             if (errno == EINTR) {
+                exit_reason = 1;
                 continue;
             }
+            exit_reason = errno;
 #endif
             break;
         }
@@ -984,7 +1037,7 @@ int http_server_run(app_t *app) {
             free(ctx);
         }
     }
-    app_log(app, "WARN", "HTTP 后台循环已退出");
+    app_log(app, "WARN", "HTTP 后台循环已退出: running=%d reason=%d", app->running, exit_reason);
     close(fd);
     return 0;
 }
