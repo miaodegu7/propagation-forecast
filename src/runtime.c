@@ -133,6 +133,119 @@ static int message_has_remote_cq_image(const char *message) {
          strstr(message, "[CQ:image,file=https://") != NULL);
 }
 
+static char *base64_encode_alloc(const unsigned char *data, size_t len) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_len = ((len + 2) / 3) * 4;
+    char *out = malloc(out_len + 1);
+    size_t in_pos = 0;
+    size_t out_pos = 0;
+    if (!out) {
+        return NULL;
+    }
+
+    while (in_pos < len) {
+        size_t remaining = len - in_pos;
+        unsigned int octet_a = data[in_pos++];
+        unsigned int octet_b = remaining > 1 ? data[in_pos++] : 0;
+        unsigned int octet_c = remaining > 2 ? data[in_pos++] : 0;
+        unsigned int triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+        out[out_pos++] = alphabet[(triple >> 18) & 0x3Fu];
+        out[out_pos++] = alphabet[(triple >> 12) & 0x3Fu];
+        out[out_pos++] = remaining > 1 ? alphabet[(triple >> 6) & 0x3Fu] : '=';
+        out[out_pos++] = remaining > 2 ? alphabet[triple & 0x3Fu] : '=';
+    }
+    out[out_len] = '\0';
+    return out;
+}
+
+static char *message_replace_remote_cq_images_with_base64(const char *message, app_t *app) {
+    sb_t out;
+    int replaced = 0;
+    const char *p = message;
+    if (!message) {
+        return NULL;
+    }
+
+    sb_init(&out);
+    while (*p) {
+        const char *tag = strstr(p, "[CQ:image,file=");
+        if (!tag) {
+            sb_append(&out, p);
+            break;
+        }
+
+        if (tag > p) {
+            size_t prefix_len = (size_t)(tag - p);
+            char *prefix = malloc(prefix_len + 1);
+            if (!prefix) {
+                sb_free(&out);
+                return NULL;
+            }
+            memcpy(prefix, p, prefix_len);
+            prefix[prefix_len] = '\0';
+            sb_append(&out, prefix);
+            free(prefix);
+        }
+
+        const char *file = tag + strlen("[CQ:image,file=");
+        const char *end = strchr(file, ']');
+        if (!end) {
+            sb_append(&out, tag);
+            break;
+        }
+
+        size_t url_len = (size_t)(end - file);
+        char url[1024];
+        if (url_len >= sizeof(url)) {
+            sb_free(&out);
+            return NULL;
+        }
+        memcpy(url, file, url_len);
+        url[url_len] = '\0';
+
+        if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) {
+            long status = 0;
+            size_t image_size = 0;
+            char *image_data = http_get_binary(url, NULL, &status, &image_size);
+            if (!image_data || status < 200 || status >= 300 || image_size == 0) {
+                if (app) {
+                    app_log(app, "WARN", "远程图片下载失败，无法转成本地可发图片: %s status=%ld", url, status);
+                }
+                free(image_data);
+                sb_free(&out);
+                return NULL;
+            }
+
+            char *base64 = base64_encode_alloc((const unsigned char *)image_data, image_size);
+            free(image_data);
+            if (!base64) {
+                sb_free(&out);
+                return NULL;
+            }
+
+            sb_append(&out, "[CQ:image,file=base64://");
+            sb_append(&out, base64);
+            sb_append(&out, "]");
+            free(base64);
+            replaced = 1;
+        } else {
+            char original_tag[1200];
+            snprintf(original_tag, sizeof(original_tag), "[CQ:image,file=%s]", url);
+            sb_append(&out, original_tag);
+        }
+
+        p = end + 1;
+    }
+
+    if (!replaced) {
+        sb_free(&out);
+        return NULL;
+    }
+    return out.data;
+}
+
 static char *message_replace_remote_cq_images_with_links(const char *message) {
     if (!message) {
         return NULL;
@@ -449,6 +562,29 @@ int onebot_send_message(app_t *app, target_type_t type, const char *target_id, c
         if (attempt < attempts && settings.onebot_retry_delay_ms > 0) {
             app_sleep_ms(settings.onebot_retry_delay_ms);
         }
+    }
+    if (!ok && message_has_remote_cq_image(message)) {
+        char *embedded_message = message_replace_remote_cq_images_with_base64(message, app);
+        if (embedded_message && strcmp(embedded_message, message) != 0) {
+            sb_t embedded_json;
+            sb_init(&embedded_json);
+            build_onebot_message_json(&embedded_json, type, target_id, embedded_message);
+
+            long status = 0;
+            char *response = http_post_json(url, settings.onebot_access_token,
+                embedded_json.data ? embedded_json.data : "{}", &status);
+            ok = response != NULL && status >= 200 && status < 300 &&
+                onebot_response_ok(response, last_detail, sizeof(last_detail));
+            last_status = status;
+            if (ok) {
+                app_log(app, "WARN",
+                    "OneBot 远程图片已自动下载并转为可发送图片: target=%s",
+                    target_id);
+            }
+            free(response);
+            sb_free(&embedded_json);
+        }
+        free(embedded_message);
     }
     if (!ok && message_has_remote_cq_image(message)) {
         fallback_message = message_replace_remote_cq_images_with_links(message);
