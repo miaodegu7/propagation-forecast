@@ -1,5 +1,12 @@
 #include "app.h"
 
+/* 这个文件只处理 6m 的实时 spots。
+ * 数据来源不是网页抓取，而是直接订阅 PSKReporter 的 MQTT 流，
+ * 这样更稳定，也更适合做长期运行的实时判断。 */
+
+/* 下面几个 JSON 辅助函数是“够用型”解析器。
+ * MQTT payload 的结构比较简单，所以这里不引入完整 JSON 库，
+ * 只提取本项目用得到的键。 */
 static const char *find_json_key_local(const char *json, const char *key) {
     static char pattern[64];
     snprintf(pattern, sizeof(pattern), "\"%s\"", key);
@@ -53,6 +60,8 @@ static int extract_json_number_local(const char *json, const char *key, double *
 
 static int find_matching_grid_prefix(const settings_t *settings, const psk_spot_t *spot,
                                      char *matched_prefix, size_t matched_prefix_len) {
+    /* 用户可以配置多个网格前缀。
+     * 只要发送端或接收端命中其中任意一个前缀，就认为这条 spot 与本台相关。 */
     char grids[MAX_HUGE_TEXT];
     if (settings->psk_grids[0]) {
         copy_string(grids, sizeof(grids), settings->psk_grids);
@@ -88,6 +97,8 @@ static void append_unique_csv(char *csv, size_t csv_len, const char *value) {
 }
 
 static void psk_add_spot(app_t *app, const psk_spot_t *spot) {
+    /* spots 是固定长度环形缓冲。
+     * 新 spot 到来时永远覆盖最老位置，避免程序长期运行时内存不断增长。 */
     pthread_mutex_lock(&app->spot_mutex);
     app->spots[app->spot_head] = *spot;
     app->spots[app->spot_head].in_use = 1;
@@ -101,6 +112,7 @@ static void psk_add_spot(app_t *app, const psk_spot_t *spot) {
 static void on_connect_cb(struct mosquitto *mosq, void *userdata, int rc) {
     app_t *app = (app_t *)userdata;
     if (rc == 0) {
+        /* 这里只订阅 6m 主题，减少无关流量。 */
         app->mqtt_connected = 1;
         mosquitto_subscribe(mosq, NULL, "pskr/filter/v2/6m/#", 0);
         app_log(app, "INFO", "已连接 PSKReporter MQTT");
@@ -124,6 +136,8 @@ static void on_message_cb(struct mosquitto *mosq, void *userdata, const struct m
         return;
     }
 
+    /* 先把 MQTT payload 还原成统一的内部结构 psk_spot_t，
+     * 后续无论是摘要计算还是后台表格，都只依赖这个结构。 */
     psk_spot_t spot;
     memset(&spot, 0, sizeof(spot));
     copy_string(spot.band, sizeof(spot.band), "6m");
@@ -149,6 +163,8 @@ static void on_message_cb(struct mosquitto *mosq, void *userdata, const struct m
 }
 
 int psk_start(app_t *app) {
+    /* MQTT 用异步连接 + 后台 loop 线程。
+     * 主线程不用自己轮询 socket，适合常驻服务。 */
     mosquitto_lib_init();
     app->mosq = mosquitto_new("propagation-forecast-bot", true, app);
     if (!app->mosq) {
@@ -192,6 +208,11 @@ static int is_local_relevant(const settings_t *settings, const psk_spot_t *spot,
                              int *counterpart_distance, char *peer_call, size_t peer_call_len,
                              char *peer_grid, size_t peer_grid_len,
                              char *matched_prefix, size_t matched_prefix_len) {
+    /* “是否与本地有关”有两条路：
+     * 1. 直接命中用户配置的网格前缀
+     * 2. 通过经纬度计算，落在用户设定半径内
+     *
+     * 命中后还会顺手算出对端距离，方便后面做 6m 强度分析和后台展示。 */
     int station_has_coords = !(station_lat == 0.0 && station_lon == 0.0);
     int direct_match = find_matching_grid_prefix(settings, spot, matched_prefix, matched_prefix_len);
     double sender_lat = 0.0, sender_lon = 0.0, receiver_lat = 0.0, receiver_lon = 0.0;
@@ -223,12 +244,14 @@ static int is_local_relevant(const settings_t *settings, const psk_spot_t *spot,
 }
 
 void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *out) {
+    /* 这个函数把“原始 spot 列表”压缩成“可直接用于报告和告警的摘要”。 */
     memset(out, 0, sizeof(*out));
     out->mqtt_connected = app->mqtt_connected;
     out->best_snr = -999;
 
     double station_lat = settings->latitude;
     double station_lon = settings->longitude;
+    /* 用户没有手填经纬度时，尽量从主网格或 PSK 监控网格推导。 */
     if ((station_lat == 0.0 && station_lon == 0.0) || isnan(station_lat) || isnan(station_lon)) {
         if (grid_to_latlon(settings->station_grid, &station_lat, &station_lon) != 0 && settings->psk_grids[0]) {
             char first_grid[MAX_TEXT];
@@ -253,6 +276,7 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
         if (!spot->in_use || spot->timestamp < cutoff_60) {
             continue;
         }
+        /* 先统计全球 6m 活跃度，再判断是否与本地相关。 */
         out->global_spots_60m++;
         if (spot->timestamp >= cutoff_15) {
             out->global_spots_15m++;
@@ -270,6 +294,7 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
             continue;
         }
 
+        /* 命中本地相关条件后，再更新本地窗口内的统计指标。 */
         out->local_spots_60m++;
         if (spot->timestamp >= cutoff_15) {
             out->local_spots_15m++;
@@ -294,6 +319,8 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
     }
     pthread_mutex_unlock(&app->spot_mutex);
 
+    /* score 不是严格物理量，而是给提醒等级和后台展示用的经验分。
+     * PSK 本地 spot 权重最高，长路径和全球活跃度作为附加参考。 */
     int score = 0;
     score += out->mqtt_connected ? 8 : 0;
     score += clamp_int(out->local_spots_15m * 18, 0, 45);
@@ -310,6 +337,7 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
     }
     out->score = clamp_int(score, 0, 100);
 
+    /* assessment/confidence 是给最终中文报告直接使用的结论文本。 */
     if (out->local_spots_15m >= 3 || out->local_spots_60m >= 6) {
         copy_string(out->assessment, sizeof(out->assessment), "明确开口");
         copy_string(out->confidence, sizeof(out->confidence), "高");
@@ -329,6 +357,8 @@ void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *
 }
 
 void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, int max_rows) {
+    /* 后台“最近 6m Spot”表格按时间倒序展示，
+     * 只显示最近窗口内且与本地相关的 spot。 */
     double station_lat = settings->latitude;
     double station_lon = settings->longitude;
     if ((station_lat == 0.0 && station_lon == 0.0) || isnan(station_lat) || isnan(station_lon)) {

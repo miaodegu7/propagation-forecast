@@ -77,6 +77,8 @@ typedef int app_socket_t;
 #define MAX_RATE_LIMITS 256
 #define MAX_TEMPLATE_NAME 64
 
+/* 简单字符串构建器。
+ * 后台页面 HTML、JSON 请求体和日志片段都会用它来逐步拼接。 */
 typedef struct {
     char *data;
     size_t len;
@@ -116,12 +118,17 @@ typedef struct {
     char notes[MAX_LARGE_TEXT];
 } satellite_t;
 
+/* 所有可配置项都会落到 settings 里。
+ * 这里既包含后台监听信息，也包含抓取频率、模板、问词和机器人发送参数。 */
 typedef struct {
+    /* 本地后台 HTTP 服务配置 */
     char bind_addr[MAX_TEXT];
     int http_port;
     char admin_user[MAX_TEXT];
     char admin_password[MAX_TEXT];
 
+    /* 台站位置与时区。
+     * latitude/longitude 优先，缺失时会尽量从网格反推。 */
     char station_name[MAX_TEXT];
     char station_grid[MAX_SMALL_TEXT];
     char psk_grids[MAX_HUGE_TEXT];
@@ -130,6 +137,7 @@ typedef struct {
     double altitude_m;
     char timezone[MAX_TEXT];
 
+    /* OneBot / NapCat 发送配置 */
     char onebot_api_base[MAX_LARGE_TEXT];
     char onebot_access_token[MAX_LARGE_TEXT];
     char onebot_webhook_token[MAX_LARGE_TEXT];
@@ -145,6 +153,7 @@ typedef struct {
     int evening_enabled;
     int refresh_interval_minutes;
 
+    /* 各抓取源的独立轮询周期 */
     int hamqsl_interval_minutes;
     int weather_interval_minutes;
     int tropo_interval_minutes;
@@ -153,16 +162,19 @@ typedef struct {
     int psk_eval_interval_seconds;
     int snapshot_rebuild_seconds;
 
+    /* PSKReporter 本地相关性判断参数 */
     int psk_radius_km;
     int psk_window_minutes;
     int rate_limit_per_minute;
 
+    /* 告警阈值与告警节流 */
     int geomag_alert_enabled;
     int geomag_alert_threshold_g;
     int sixm_alert_enabled;
     int sixm_alert_interval_minutes;
     int sixm_psk_trigger_spots;
 
+    /* F5LEN / 天气 / 流星雨 / 卫星相关数据源参数 */
     char tropo_source_url[MAX_LARGE_TEXT];
     int tropo_forecast_hours;
     int tropo_send_image;
@@ -183,11 +195,13 @@ typedef struct {
     char satellite_mode_filter[MAX_SMALL_TEXT];
     int satellite_max_items;
 
+    /* HAMqsl 输出控制 */
     char hamqsl_widget_url[MAX_LARGE_TEXT];
     char hamqsl_selected_fields[MAX_HUGE_TEXT];
     int include_source_urls;
     int include_hamqsl_widget;
 
+    /* QQ 机器人发出去的文本模板 */
     char report_template_full[MAX_TEMPLATE_TEXT];
     char report_template_6m[MAX_TEMPLATE_TEXT];
     char report_template_solar[MAX_TEMPLATE_TEXT];
@@ -282,6 +296,8 @@ typedef struct {
     char receiver_grid[MAX_TEXT];
 } psk_spot_t;
 
+/* 对最近一段时间 6m PSK spots 的归纳。
+ * 这里不是原始点列表，而是给报告模板和告警逻辑直接使用的摘要结果。 */
 typedef struct {
     int mqtt_connected;
     int global_spots_15m;
@@ -354,6 +370,8 @@ typedef struct {
     int pass_count;
 } satellite_summary_t;
 
+/* snapshot 是“当前系统视图”。
+ * 各抓取器把原始数据写进来，随后 build_reports 再把它们组装成最终要展示/发送的文本。 */
 typedef struct {
     time_t refreshed_at;
     hamqsl_data_t hamqsl;
@@ -382,17 +400,22 @@ typedef struct {
     char analysis_summary[2048];
 } snapshot_t;
 
+/* 每种数据源都有自己的下次轮询时间，互不影响。 */
 typedef struct {
     time_t next_due;
     int interval_seconds;
 } poll_state_t;
 
+/* 简单的每分钟限流桶。
+ * 机器人问答按“群/私聊目标”分别限流。 */
 typedef struct {
     char key[MAX_TEXT];
     time_t minute_window;
     int count;
 } rate_limit_entry_t;
 
+/* 应用全局状态。
+ * 这里同时保存数据库句柄、缓存快照、线程同步对象、PSK 环形缓冲和异步刷新状态。 */
 typedef struct {
     sqlite3 *db;
     pthread_mutex_t db_mutex;
@@ -405,12 +428,14 @@ typedef struct {
     settings_t settings;
     snapshot_t snapshot;
 
+    /* MQTT 到来的原始 6m spot 会进入这个环形缓冲。 */
     psk_spot_t spots[MAX_SPOTS];
     size_t spot_head;
     size_t spot_count;
     struct mosquitto *mosq;
     int mqtt_connected;
 
+    /* 每类数据源分别记住自己的轮询状态。 */
     poll_state_t hamqsl_poll;
     poll_state_t weather_poll;
     poll_state_t tropo_poll;
@@ -423,12 +448,16 @@ typedef struct {
     int last_sixm_alert_level;
     time_t last_sixm_alert_at;
 
+    /* 机器人问答限流缓存 */
     rate_limit_entry_t rate_limits[MAX_RATE_LIMITS];
     int running;
     app_socket_t http_fd;
     int open_admin_console_on_start;
     int admin_console_opened;
     char last_error[MAX_LOG_TEXT];
+
+    /* 后台异步刷新状态。
+     * 首页会轮询这里的值，用来显示“刷新中/已完成/失败”。 */
     int async_refresh_running;
     int async_refresh_last_rc;
     time_t async_refresh_started_at;
@@ -437,11 +466,14 @@ typedef struct {
     char async_refresh_status[MAX_TEXT];
 } app_t;
 
+/* libcurl 下载结果暂存。 */
 typedef struct {
     char *data;
     size_t size;
 } memory_block_t;
 
+/* 极简 HTTP 请求对象。
+ * 这里只解析这个项目需要的字段，不追求完整 HTTP 协议实现。 */
 typedef struct {
     char method[8];
     char path[256];
@@ -452,11 +484,13 @@ typedef struct {
     size_t body_len;
 } http_request_t;
 
+/* sb_*：字符串构建工具 */
 void sb_init(sb_t *sb);
 void sb_free(sb_t *sb);
 int sb_append(sb_t *sb, const char *text);
 int sb_appendf(sb_t *sb, const char *fmt, ...);
 
+/* util.c：通用字符串、时间、网络和平台辅助函数 */
 void trim_whitespace(char *text);
 void copy_string(char *dst, size_t dst_len, const char *src);
 void format_time_local(time_t when, char *out, size_t out_len);
@@ -490,6 +524,7 @@ int app_windows_path_to_utf16(const char *path, wchar_t *out, size_t out_len);
 int app_net_init(void);
 void app_net_cleanup(void);
 
+/* storage.c：SQLite 配置和运行状态存取 */
 int storage_init(app_t *app, const char *db_path);
 int storage_load_settings(app_t *app, settings_t *out);
 int storage_save_setting(app_t *app, const char *key, const char *value);
@@ -512,6 +547,7 @@ int storage_get_state(app_t *app, const char *key, char *out, size_t out_len);
 int storage_set_state(app_t *app, const char *key, const char *value);
 int storage_load_recent_logs(app_t *app, sb_t *html_rows);
 
+/* fetch.c：对外抓取和报告生成 */
 int fetch_hamqsl_data(hamqsl_data_t *out);
 int fetch_weather_data(const settings_t *settings, weather_data_t *out);
 int fetch_tropo_data(const settings_t *settings, tropo_data_t *out);
@@ -531,11 +567,13 @@ void app_check_alerts(app_t *app);
 int app_rate_limit_allow(app_t *app, const char *key);
 const char *app_get_report_by_kind(const snapshot_t *snapshot, const char *kind);
 
+/* psk.c：PSKReporter MQTT 接入与 6m 摘要分析 */
 int psk_start(app_t *app);
 void psk_stop(app_t *app);
 void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *out);
 void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, int max_rows);
 
+/* http_server.c：内置后台 */
 int http_server_run(app_t *app);
 
 #endif
