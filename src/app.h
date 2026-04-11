@@ -400,6 +400,7 @@ typedef struct {
     pthread_mutex_t refresh_mutex;
     pthread_mutex_t spot_mutex;
     pthread_mutex_t rate_mutex;
+    pthread_mutex_t async_mutex;
 
     settings_t settings;
     snapshot_t snapshot;
@@ -428,6 +429,12 @@ typedef struct {
     int open_admin_console_on_start;
     int admin_console_opened;
     char last_error[MAX_LOG_TEXT];
+    int async_refresh_running;
+    int async_refresh_last_rc;
+    time_t async_refresh_started_at;
+    time_t async_refresh_finished_at;
+    char async_refresh_reason[MAX_TEXT];
+    char async_refresh_status[MAX_TEXT];
 } app_t;
 
 typedef struct {
@@ -517,6 +524,8 @@ int send_report_to_all_targets(app_t *app, const char *message);
 int send_report_kind_to_all_targets(app_t *app, const char *report_kind);
 void app_run_periodic_fetches(app_t *app);
 int app_force_refresh(app_t *app);
+void app_reset_poll_schedule(app_t *app, const settings_t *settings, time_t now);
+int app_request_refresh_async(app_t *app, int force, int reset_schedule, const char *reason);
 void app_rebuild_snapshot(app_t *app);
 void app_check_alerts(app_t *app);
 int app_rate_limit_allow(app_t *app, const char *key);

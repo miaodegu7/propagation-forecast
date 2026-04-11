@@ -380,6 +380,95 @@ static void save_form_setting(app_t *app, const char *body, const char *key) {
     }
 }
 
+static void json_escape_to_sb_local(sb_t *sb, const char *text) {
+    const unsigned char *p = (const unsigned char *)(text ? text : "");
+    while (*p) {
+        switch (*p) {
+            case '\\': sb_append(sb, "\\\\"); break;
+            case '"': sb_append(sb, "\\\""); break;
+            case '\n': sb_append(sb, "\\n"); break;
+            case '\r': sb_append(sb, "\\r"); break;
+            case '\t': sb_append(sb, "\\t"); break;
+            default: {
+                char temp[2] = {(char)*p, '\0'};
+                sb_append(sb, temp);
+                break;
+            }
+        }
+        p++;
+    }
+}
+
+static int snapshot_has_remote_data(const snapshot_t *snapshot) {
+    return snapshot->hamqsl.valid || snapshot->weather.valid || snapshot->tropo.valid ||
+        snapshot->meteor.valid || snapshot->satellite.valid;
+}
+
+static void append_refresh_status_json(app_t *app, sb_t *json) {
+    snapshot_t snapshot;
+    int running = 0;
+    int last_rc = 0;
+    time_t started_at = 0;
+    time_t finished_at = 0;
+    char reason[MAX_TEXT] = {0};
+    char status[MAX_TEXT] = {0};
+    time_t now = time(NULL);
+    char refreshed_text[MAX_TEXT] = "尚未刷新";
+    char started_text[MAX_TEXT] = "";
+    char finished_text[MAX_TEXT] = "";
+    long long age_seconds = -1;
+    int needs_refresh = 0;
+
+    pthread_mutex_lock(&app->cache_mutex);
+    snapshot = app->snapshot;
+    pthread_mutex_unlock(&app->cache_mutex);
+
+    pthread_mutex_lock(&app->async_mutex);
+    running = app->async_refresh_running;
+    last_rc = app->async_refresh_last_rc;
+    started_at = app->async_refresh_started_at;
+    finished_at = app->async_refresh_finished_at;
+    copy_string(reason, sizeof(reason), app->async_refresh_reason);
+    copy_string(status, sizeof(status), app->async_refresh_status);
+    pthread_mutex_unlock(&app->async_mutex);
+
+    if (snapshot.refreshed_at > 0) {
+        format_time_local(snapshot.refreshed_at, refreshed_text, sizeof(refreshed_text));
+        age_seconds = (long long)difftime(now, snapshot.refreshed_at);
+    }
+    if (started_at > 0) {
+        format_time_local(started_at, started_text, sizeof(started_text));
+    }
+    if (finished_at > 0) {
+        format_time_local(finished_at, finished_text, sizeof(finished_text));
+    }
+    needs_refresh = !snapshot_has_remote_data(&snapshot) || snapshot.refreshed_at == 0;
+
+    sb_append(json, "{");
+    sb_appendf(json, "\"refreshing\":%s,", running ? "true" : "false");
+    sb_append(json, "\"status\":\"");
+    json_escape_to_sb_local(json, status[0] ? status : "空闲");
+    sb_append(json, "\",\"reason\":\"");
+    json_escape_to_sb_local(json, reason);
+    sb_append(json, "\",");
+    sb_appendf(json, "\"last_rc\":%d,", last_rc);
+    sb_appendf(json, "\"last_refreshed_at\":%lld,", (long long)snapshot.refreshed_at);
+    sb_append(json, "\"last_refreshed_text\":\"");
+    json_escape_to_sb_local(json, refreshed_text);
+    sb_append(json, "\",");
+    sb_appendf(json, "\"snapshot_age_seconds\":%lld,", age_seconds);
+    sb_appendf(json, "\"started_at\":%lld,", (long long)started_at);
+    sb_append(json, "\"started_text\":\"");
+    json_escape_to_sb_local(json, started_text);
+    sb_append(json, "\",");
+    sb_appendf(json, "\"finished_at\":%lld,", (long long)finished_at);
+    sb_append(json, "\"finished_text\":\"");
+    json_escape_to_sb_local(json, finished_text);
+    sb_append(json, "\",");
+    sb_appendf(json, "\"needs_refresh\":%s", needs_refresh ? "true" : "false");
+    sb_append(json, "}");
+}
+
 static void save_settings_from_form(app_t *app, const char *body) {
     const char *keys[] = {
         "bind_addr", "http_port", "admin_user", "admin_password",
@@ -464,14 +553,34 @@ static void handle_add_satellite(app_t *app, const char *body) {
 }
 
 static char *render_dashboard(app_t *app) {
-    refresh_snapshot(app, 0);
-
     settings_t settings;
     snapshot_t snapshot;
+    int async_running = 0;
+    int async_last_rc = 0;
+    char async_status[MAX_TEXT] = {0};
+    char refreshed_text[MAX_TEXT] = "尚未刷新";
+    char refreshed_age_text[MAX_TEXT] = "缓存尚未建立";
+    int auto_refresh = 0;
+    time_t now = time(NULL);
     pthread_mutex_lock(&app->cache_mutex);
     settings = app->settings;
     snapshot = app->snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
+    pthread_mutex_lock(&app->async_mutex);
+    async_running = app->async_refresh_running;
+    async_last_rc = app->async_refresh_last_rc;
+    copy_string(async_status, sizeof(async_status), app->async_refresh_status);
+    pthread_mutex_unlock(&app->async_mutex);
+
+    if (snapshot.refreshed_at > 0) {
+        long long age = (long long)difftime(now, snapshot.refreshed_at);
+        format_time_local(snapshot.refreshed_at, refreshed_text, sizeof(refreshed_text));
+        snprintf(refreshed_age_text, sizeof(refreshed_age_text), "缓存年龄 %lld 秒", age);
+    }
+    auto_refresh = !async_running &&
+        (!snapshot_has_remote_data(&snapshot) ||
+        snapshot.refreshed_at == 0 ||
+        difftime(now, snapshot.refreshed_at) >= clamp_int(settings.snapshot_rebuild_seconds, 15, 600));
 
     sb_t recent_spots, logs_rows, targets_rows, schedule_rows, satellite_rows, page;
     sb_init(&recent_spots);
@@ -514,7 +623,9 @@ static char *render_dashboard(app_t *app) {
     sb_appendf(&page,
         "<section class=\"hero\"><h1>%s</h1><p>台站 %s / %s / 时区 %s</p>"
         "<p>OneBot 回调地址：<code>/api/onebot?token=%s</code></p>"
-        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span><span class=\"pill\">卫星 %s / %d 条</span></p></section>",
+        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span><span class=\"pill\">卫星 %s / %d 条</span></p>"
+        "<p><span class=\"pill\" id=\"refresh-state\">刷新 %s</span><span class=\"pill\" id=\"refresh-time\">%s</span><span class=\"pill\" id=\"refresh-age\">%s</span></p>"
+        "<p class=\"help\" id=\"refresh-detail\">%s</p></section>",
         settings.bot_name[0] ? settings.bot_name : APP_NAME,
         settings.station_name,
         settings.station_grid,
@@ -524,13 +635,19 @@ static char *render_dashboard(app_t *app) {
         snapshot.sun_summary,
         snapshot.meteor.valid ? snapshot.meteor.shower_name : "未获取",
         snapshot.satellite.valid ? snapshot.satellite.api_status : "未获取",
-        snapshot.satellite.valid ? snapshot.satellite.pass_count : 0);
+        snapshot.satellite.valid ? snapshot.satellite.pass_count : 0,
+        async_running ? "进行中" : (async_status[0] ? async_status : "空闲"),
+        refreshed_text,
+        refreshed_age_text,
+        async_running ? "页面已先用缓存秒开，后台正在抓取最新数据，完成后会自动更新。" :
+        (async_last_rc < 0 ? "上次后台刷新失败，当前先显示已有缓存，可稍后再试一次。" :
+        "页面现在默认直接显示缓存，打开后会在后台异步更新，不再阻塞界面。"));
 
     sb_append(&page, "<div class=\"grid\">");
     sb_append(&page, "<section class=\"card\"><h2>当前分析</h2><p>");
     html_escape_to_sb(&page, snapshot.analysis_summary);
     sb_append(&page, "</p><div class=\"toolbar\">"
-        "<form method=\"post\" action=\"/actions/refresh\"><button type=\"submit\">立即刷新</button></form>"
+        "<form method=\"post\" action=\"/actions/refresh\" id=\"refresh-form\"><button type=\"submit\" id=\"refresh-button\">立即刷新</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"full\"><button type=\"submit\">发送完整简报</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"6m\"><button type=\"submit\">发送 6m 简报</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"solar\"><button type=\"submit\">发送太阳简报</button></form>"
@@ -699,7 +816,19 @@ static char *render_dashboard(app_t *app) {
     sb_append(&page, logs_rows.data ? logs_rows.data : "");
     sb_append(&page, "</table></section>");
 
-    sb_append(&page, "</div></body></html>");
+    sb_appendf(&page,
+        "<script>"
+        "const dashboardState={autoRefresh:%s,lastRenderedAt:%lld};"
+        "let awaitingReload=false;"
+        "async function fetchRefreshStatus(){const res=await fetch('/api/status',{cache:'no-store'});if(!res.ok)return null;return await res.json();}"
+        "function setText(id,text){const el=document.getElementById(id);if(el)el.textContent=text;}"
+        "function renderRefreshStatus(data){if(!data)return;setText('refresh-state','刷新 '+(data.refreshing?'进行中':(data.status||'空闲')));setText('refresh-time','最后刷新 '+(data.last_refreshed_text||'尚未刷新'));setText('refresh-age',data.snapshot_age_seconds>=0?('缓存年龄 '+data.snapshot_age_seconds+' 秒'):'缓存尚未建立');if(data.refreshing){setText('refresh-detail','后台正在抓取最新传播数据：'+(data.reason||'manual')+'，页面会在完成后自动更新。');}else if(data.last_rc<0){setText('refresh-detail','上次后台刷新失败，当前先显示旧缓存；你可以稍后再次刷新。');}else{setText('refresh-detail','页面已使用缓存秒开，后台刷新完成后会自动显示最新内容。');}const btn=document.getElementById('refresh-button');if(btn){btn.disabled=!!data.refreshing;btn.textContent=data.refreshing?'刷新中...':'立即刷新';}}"
+        "async function queueRefresh(reason){const res=await fetch('/api/refresh?reason='+encodeURIComponent(reason||'manual'),{method:'POST',cache:'no-store'});if(!res.ok)return;const data=await res.json();awaitingReload=true;renderRefreshStatus(data);}"
+        "async function pollRefreshStatus(){try{const data=await fetchRefreshStatus();renderRefreshStatus(data);if(data&&awaitingReload&&!data.refreshing&&data.last_refreshed_at>dashboardState.lastRenderedAt){window.location.reload();}}catch(e){}}"
+        "document.addEventListener('DOMContentLoaded',function(){const form=document.getElementById('refresh-form');if(form){form.addEventListener('submit',function(ev){ev.preventDefault();queueRefresh('manual');});}pollRefreshStatus();setInterval(pollRefreshStatus,3000);if(dashboardState.autoRefresh){queueRefresh('page-load');}});"
+        "</script></div></body></html>",
+        auto_refresh ? "true" : "false",
+        (long long)snapshot.refreshed_at);
 
     sb_free(&recent_spots);
     sb_free(&logs_rows);
@@ -857,6 +986,31 @@ static void handle_request(app_t *app, app_socket_t fd, const http_request_t *re
         free(html);
         return;
     }
+    if (strcmp(req->path, "/api/status") == 0 && strcmp(req->method, "GET") == 0) {
+        sb_t json;
+        sb_init(&json);
+        append_refresh_status_json(app, &json);
+        send_response(fd, "200 OK", "application/json", json.data ? json.data : "{}");
+        sb_free(&json);
+        return;
+    }
+    if (strcmp(req->path, "/api/refresh") == 0 && strcmp(req->method, "POST") == 0) {
+        char reason[MAX_TEXT] = {0};
+        if (get_form_value(req->query, "reason", reason, sizeof(reason)) != 0) {
+            copy_string(reason, sizeof(reason), "manual");
+        }
+        int rc = app_request_refresh_async(app, 1, 0, reason);
+        sb_t json;
+        sb_init(&json);
+        append_refresh_status_json(app, &json);
+        if (rc == -1) {
+            send_response(fd, "500 Internal Server Error", "application/json", json.data ? json.data : "{}");
+        } else {
+            send_response(fd, rc == 0 ? "202 Accepted" : "200 OK", "application/json", json.data ? json.data : "{}");
+        }
+        sb_free(&json);
+        return;
+    }
     if (strcmp(req->path, "/settings/save") == 0 && strcmp(req->method, "POST") == 0) {
         save_settings_from_form(app, req->body);
         send_redirect(fd, "/");
@@ -929,7 +1083,7 @@ static void handle_request(app_t *app, app_socket_t fd, const http_request_t *re
         return;
     }
     if (strcmp(req->path, "/actions/refresh") == 0 && strcmp(req->method, "POST") == 0) {
-        app_force_refresh(app);
+        app_request_refresh_async(app, 1, 0, "manual");
         send_redirect(fd, "/");
         return;
     }

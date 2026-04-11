@@ -111,6 +111,7 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&app.refresh_mutex, NULL);
     pthread_mutex_init(&app.spot_mutex, NULL);
     pthread_mutex_init(&app.rate_mutex, NULL);
+    pthread_mutex_init(&app.async_mutex, NULL);
 
     if (app_net_init() != 0) {
         fprintf(stderr, "failed to initialize network runtime\n");
@@ -149,7 +150,8 @@ int main(int argc, char **argv) {
 
     app_log(&app, "INFO", "服务启动，数据库: %s", db_path);
     psk_start(&app);
-    app_force_refresh(&app);
+    app_rebuild_snapshot(&app);
+    app_request_refresh_async(&app, 1, 1, "startup");
 
     pthread_t scheduler;
     pthread_create(&scheduler, NULL, scheduler_thread, &app);
@@ -173,6 +175,7 @@ int main(int argc, char **argv) {
     pthread_mutex_destroy(&app.refresh_mutex);
     pthread_mutex_destroy(&app.spot_mutex);
     pthread_mutex_destroy(&app.rate_mutex);
+    pthread_mutex_destroy(&app.async_mutex);
 
     return server_rc == 0 ? 0 : 1;
 }

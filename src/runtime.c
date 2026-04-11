@@ -102,6 +102,105 @@ static void mark_poll_done(poll_state_t *state, time_t now) {
     state->next_due = now + interval;
 }
 
+typedef struct {
+    app_t *app;
+    int force;
+    int reset_schedule;
+    char reason[MAX_TEXT];
+} async_refresh_task_t;
+
+void app_reset_poll_schedule(app_t *app, const settings_t *settings, time_t now) {
+    pthread_mutex_lock(&app->refresh_mutex);
+    ensure_poll_state(&app->hamqsl_poll, settings->hamqsl_interval_minutes * 60, now);
+    mark_poll_done(&app->hamqsl_poll, now);
+    ensure_poll_state(&app->weather_poll, settings->weather_interval_minutes * 60, now);
+    mark_poll_done(&app->weather_poll, now);
+    ensure_poll_state(&app->tropo_poll, settings->tropo_interval_minutes * 60, now);
+    mark_poll_done(&app->tropo_poll, now);
+    ensure_poll_state(&app->meteor_poll, settings->meteor_interval_hours * 3600, now);
+    mark_poll_done(&app->meteor_poll, now);
+    ensure_poll_state(&app->satellite_poll, settings->satellite_interval_hours * 3600, now);
+    mark_poll_done(&app->satellite_poll, now);
+    ensure_poll_state(&app->psk_eval_poll, settings->psk_eval_interval_seconds, now);
+    mark_poll_done(&app->psk_eval_poll, now);
+    ensure_poll_state(&app->snapshot_poll, settings->snapshot_rebuild_seconds, now);
+    mark_poll_done(&app->snapshot_poll, now);
+    pthread_mutex_unlock(&app->refresh_mutex);
+}
+
+static void *async_refresh_thread(void *arg) {
+    async_refresh_task_t *task = (async_refresh_task_t *)arg;
+    app_t *app = task->app;
+    int force = task->force;
+    int reset_schedule = task->reset_schedule;
+    char reason[MAX_TEXT];
+    copy_string(reason, sizeof(reason), task->reason);
+    free(task);
+
+    int rc = force ? app_force_refresh(app) : refresh_snapshot(app, 0);
+    time_t now = time(NULL);
+
+    if (reset_schedule && rc == 0) {
+        settings_t settings;
+        pthread_mutex_lock(&app->cache_mutex);
+        settings = app->settings;
+        pthread_mutex_unlock(&app->cache_mutex);
+        app_reset_poll_schedule(app, &settings, now);
+    }
+
+    pthread_mutex_lock(&app->async_mutex);
+    app->async_refresh_running = 0;
+    app->async_refresh_last_rc = rc;
+    app->async_refresh_finished_at = now;
+    copy_string(app->async_refresh_status, sizeof(app->async_refresh_status), rc == 0 ? "空闲" : "失败");
+    pthread_mutex_unlock(&app->async_mutex);
+
+    app_log(app, rc == 0 ? "INFO" : "WARN", "异步刷新结束: reason=%s rc=%d", reason, rc);
+    return NULL;
+}
+
+int app_request_refresh_async(app_t *app, int force, int reset_schedule, const char *reason) {
+    async_refresh_task_t *task = calloc(1, sizeof(*task));
+    char reason_copy[MAX_TEXT];
+    copy_string(reason_copy, sizeof(reason_copy), reason && *reason ? reason : "manual");
+    if (!task) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&app->async_mutex);
+    if (app->async_refresh_running) {
+        pthread_mutex_unlock(&app->async_mutex);
+        free(task);
+        return 1;
+    }
+    app->async_refresh_running = 1;
+    app->async_refresh_last_rc = 0;
+    app->async_refresh_started_at = time(NULL);
+    copy_string(app->async_refresh_reason, sizeof(app->async_refresh_reason), reason_copy);
+    copy_string(app->async_refresh_status, sizeof(app->async_refresh_status), "刷新中");
+    pthread_mutex_unlock(&app->async_mutex);
+
+    task->app = app;
+    task->force = force;
+    task->reset_schedule = reset_schedule;
+    copy_string(task->reason, sizeof(task->reason), reason_copy);
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, async_refresh_thread, task) != 0) {
+        pthread_mutex_lock(&app->async_mutex);
+        app->async_refresh_running = 0;
+        app->async_refresh_last_rc = -1;
+        app->async_refresh_finished_at = time(NULL);
+        copy_string(app->async_refresh_status, sizeof(app->async_refresh_status), "启动失败");
+        pthread_mutex_unlock(&app->async_mutex);
+        free(task);
+        return -1;
+    }
+    pthread_detach(thread);
+    app_log(app, "INFO", "已排队异步刷新: reason=%s force=%d", reason_copy, force ? 1 : 0);
+    return 0;
+}
+
 const char *app_get_report_by_kind(const snapshot_t *snapshot, const char *kind) {
     if (!kind || !*kind || strcmp(kind, "full") == 0) return snapshot->report_text;
     if (strcmp(kind, "6m") == 0) return snapshot->report_6m;
@@ -283,6 +382,13 @@ int app_force_refresh(app_t *app) {
 }
 
 void app_run_periodic_fetches(app_t *app) {
+    pthread_mutex_lock(&app->async_mutex);
+    int async_running = app->async_refresh_running;
+    pthread_mutex_unlock(&app->async_mutex);
+    if (async_running) {
+        return;
+    }
+
     pthread_mutex_lock(&app->refresh_mutex);
     settings_t settings;
     storage_load_settings(app, &settings);
