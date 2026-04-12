@@ -383,16 +383,137 @@ static int meteor_days_left_from_peak(const char *peak_label) {
     return (int)floor(difftime(peak_time, now) / 86400.0 + 0.5);
 }
 
+static const char *meteor_name_to_chinese(const char *name) {
+    static const struct {
+        const char *en;
+        const char *cn;
+    } aliases[] = {
+        {"Quadrantids", "象限仪座流星雨"},
+        {"Lyrids", "天琴座流星雨"},
+        {"Eta Aquariids", "宝瓶座η流星雨"},
+        {"June Bootids", "六月牧夫座流星雨"},
+        {"Alpha Capricornids", "摩羯座α流星雨"},
+        {"Southern Delta Aquariids", "南宝瓶座δ流星雨"},
+        {"Perseids", "英仙座流星雨"},
+        {"Draconids", "天龙座流星雨"},
+        {"Orionids", "猎户座流星雨"},
+        {"Southern Taurids", "南金牛座流星雨"},
+        {"Northern Taurids", "北金牛座流星雨"},
+        {"Leonids", "狮子座流星雨"},
+        {"Geminids", "双子座流星雨"},
+        {"Ursids", "小熊座流星雨"},
+        {"Arietids", "白羊座流星雨"}
+    };
+    if (!name || !*name) {
+        return "";
+    }
+    for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); ++i) {
+        if (strcasecmp(name, aliases[i].en) == 0 || string_contains_ci(name, aliases[i].en)) {
+            return aliases[i].cn;
+        }
+    }
+    struct {
+        const char *en;
+        const char *cn;
+    } items[] = {
+        {"Quadrantids", "象限仪座流星雨"},
+        {"Lyrids", "天琴座流星雨"},
+        {"Eta Aquariids", "宝瓶座η流星雨"},
+        {"June Bootids", "六月牧夫座流星雨"},
+        {"Alpha Capricornids", "摩羯座α流星雨"},
+        {"Southern Delta Aquariids", "南宝瓶座δ流星雨"},
+        {"Perseids", "英仙座流星雨"},
+        {"Draconids", "天龙座流星雨"},
+        {"Orionids", "猎户座流星雨"},
+        {"Southern Taurids", "南金牛座流星雨"},
+        {"Northern Taurids", "北金牛座流星雨"},
+        {"Leonids", "狮子座流星雨"},
+        {"Geminids", "双子座流星雨"},
+        {"Ursids", "小熊座流星雨"},
+        {"Arietids", "白羊座流星雨"}
+    };
+    if (!name || !*name) {
+        return "";
+    }
+    for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); ++i) {
+        if (strcasecmp(name, items[i].en) == 0) {
+            return items[i].cn;
+        }
+    }
+    return name;
+}
+
+static void format_peak_date_cn(const char *peak_label, char *out, size_t out_len) {
+    struct tm peak_tm;
+    if (!peak_label || !*peak_label) {
+        copy_string(out, out_len, "");
+        return;
+    }
+    if (parse_calendar_peak_date(peak_label, &peak_tm) != 0 &&
+        parse_peak_date(peak_label, &peak_tm) != 0) {
+        copy_string(out, out_len, peak_label);
+        return;
+    }
+    snprintf(out, out_len, "%04d年%02d月%02d日",
+        peak_tm.tm_year + 1900,
+        peak_tm.tm_mon + 1,
+        peak_tm.tm_mday);
+}
+
+static void format_peak_date_cn_text(const char *peak_label, char *out, size_t out_len) {
+    struct tm peak_tm;
+    if (!peak_label || !*peak_label) {
+        copy_string(out, out_len, "");
+        return;
+    }
+    if (parse_calendar_peak_date(peak_label, &peak_tm) != 0 &&
+        parse_peak_date(peak_label, &peak_tm) != 0) {
+        copy_string(out, out_len, peak_label);
+        return;
+    }
+    snprintf(out, out_len, "%04d年%02d月%02d日",
+        peak_tm.tm_year + 1900,
+        peak_tm.tm_mon + 1,
+        peak_tm.tm_mday);
+}
+
+static void format_meteor_countdown_text(int days_left, char *out, size_t out_len) {
+    if (days_left > 0) {
+        snprintf(out, out_len, "还有 %d 天", days_left);
+    } else if (days_left == 0) {
+        copy_string(out, out_len, "就是今天");
+    } else {
+        copy_string(out, out_len, "已过");
+    }
+}
+
+static void build_band_summary_text(const hamqsl_data_t *ham, const char *time_slot, char *out, size_t out_len) {
+    sb_t sb;
+    sb_init(&sb);
+    for (int i = 0; i < ham->band_count; ++i) {
+        if (strcasecmp(ham->bands[i].time_slot, time_slot) != 0) {
+            continue;
+        }
+        if (sb.len > 0) {
+            sb_append(&sb, " | ");
+        }
+        sb_appendf(&sb, "%s %s", ham->bands[i].name, ham->bands[i].status);
+    }
+    copy_string(out, out_len, (sb.data && sb.data[0]) ? sb.data : "未报");
+    sb_free(&sb);
+}
+
 static int meteor_matches_filter(const char *name, const char *filter_csv) {
     if (!filter_csv || !*filter_csv) {
         return 1;
     }
     char temp[MAX_HUGE_TEXT];
+    const char *name_cn = meteor_name_to_chinese(name);
     copy_string(temp, sizeof(temp), filter_csv);
     char *save = NULL;
     for (char *part = strtok_r(temp, ",|/\t\r\n", &save); part; part = strtok_r(NULL, ",|/\t\r\n", &save)) {
         trim_whitespace(part);
-        if (*part && string_contains_ci(name, part)) {
+        if (*part && (string_contains_ci(name, part) || string_contains_ci(name_cn, part))) {
             return 1;
         }
     }
@@ -1044,7 +1165,7 @@ int fetch_meteor_data(const settings_t *settings, meteor_data_t *out) {
         return 0;
     }
 
-    copy_string(out->shower_name, sizeof(out->shower_name), selected[0].name);
+    copy_string(out->shower_name, sizeof(out->shower_name), meteor_name_to_chinese(selected[0].name));
     copy_string(out->peak_label, sizeof(out->peak_label), selected[0].peak_label);
     out->moon_percent = selected[0].moon_percent;
     out->days_left = selected[0].days_left;
@@ -1062,10 +1183,10 @@ int fetch_meteor_data(const settings_t *settings, meteor_data_t *out) {
         }
         if (selected[i].days_left >= 0) {
             sb_appendf(&sb, "%s（%s，距今约 %d 天，月相约 %d%%）",
-                selected[i].name, selected[i].peak_label, selected[i].days_left, selected[i].moon_percent);
+                meteor_name_to_chinese(selected[i].name), selected[i].peak_label, selected[i].days_left, selected[i].moon_percent);
         } else {
             sb_appendf(&sb, "%s（%s，月相约 %d%%）",
-                selected[i].name, selected[i].peak_label, selected[i].moon_percent);
+                meteor_name_to_chinese(selected[i].name), selected[i].peak_label, selected[i].moon_percent);
         }
     }
     copy_string(out->summary, sizeof(out->summary), sb.data ? sb.data : "");
@@ -1223,42 +1344,27 @@ int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, a
 }
 
 static void build_hamqsl_section(const settings_t *settings, const hamqsl_data_t *ham, char *out, size_t out_len) {
+    char kindex_text[32];
+    char hf_day[512];
+    char hf_night[512];
+    const char *tmpl = settings->compact_template_hamqsl[0] ? settings->compact_template_hamqsl :
+        "更新时间：{{updated}}\nK 指数：{{kindex}}（地磁：{{geomagfield}}）\nHF 白天：{{hf_day}}\nHF 夜间：{{hf_night}}";
     if (!ham->valid) {
         copy_string(out, out_len, "HAMqsl 数据暂不可用。");
         return;
     }
-    sb_t sb;
-    sb_init(&sb);
-    sb_appendf(&sb, "HAMqsl 更新时间：%s", ham->updated);
-    if (ham_field_enabled(settings, "solarflux")) append_key_value_int(&sb, "SFI", ham->solarflux);
-    if (ham_field_enabled(settings, "aindex")) append_key_value_int(&sb, "A 指数", ham->aindex);
-    if (ham_field_enabled(settings, "kindex")) append_key_value_int(&sb, "K 指数", ham->kindex);
-    if (ham_field_enabled(settings, "xray")) append_key_value(&sb, "X-Ray", ham->xray);
-    if (ham_field_enabled(settings, "sunspots")) append_key_value_int(&sb, "黑子数", ham->sunspots);
-    if (ham_field_enabled(settings, "heliumline")) append_key_value_double(&sb, "Helium line", ham->heliumline, "", 1);
-    if (ham_field_enabled(settings, "protonflux")) append_key_value_int(&sb, "质子通量", ham->protonflux);
-    if (ham_field_enabled(settings, "electronflux")) append_key_value_int(&sb, "电子通量", ham->electronflux);
-    if (ham_field_enabled(settings, "aurora")) append_key_value_int(&sb, "极光指数", ham->aurora);
-    if (ham_field_enabled(settings, "normalization")) append_key_value_double(&sb, "Normalization", ham->normalization, "", 2);
-    if (ham_field_enabled(settings, "latdegree")) append_key_value_double(&sb, "极区边界", ham->latdegree, "°", 1);
-    if (ham_field_enabled(settings, "solarwind")) append_key_value_double(&sb, "太阳风", ham->solarwind, " km/s", 1);
-    if (ham_field_enabled(settings, "magneticfield")) append_key_value_double(&sb, "磁场强度", ham->magneticfield, " nT", 1);
-    if (ham_field_enabled(settings, "geomagfield")) append_key_value(&sb, "地磁状态", ham->geomagfield);
-    if (ham_field_enabled(settings, "signalnoise")) append_key_value(&sb, "噪声", ham->signalnoise);
-    if (ham_field_enabled(settings, "fof2")) append_key_value(&sb, "foF2", ham->fof2[0] ? ham->fof2 : "未报");
-    if (ham_field_enabled(settings, "muffactor")) append_key_value(&sb, "MUF Factor", ham->muffactor[0] ? ham->muffactor : "未报");
-    if (ham_field_enabled(settings, "muf")) append_key_value(&sb, "MUF", ham->muf[0] ? ham->muf : "未报");
-    append_band_summary(&sb, ham, "day", "HF 白天");
-    append_band_summary(&sb, ham, "night", "HF 夜间");
-    if (ham->vhf_count > 0) {
-        sb_append(&sb, "\nVHF 现象：");
-        for (int i = 0; i < ham->vhf_count; ++i) {
-            if (i > 0) sb_append(&sb, " | ");
-            sb_appendf(&sb, "%s/%s %s", ham->vhf[i].name, ham->vhf[i].location, ham->vhf[i].status);
-        }
-    }
-    copy_string(out, out_len, sb.data ? sb.data : "");
-    sb_free(&sb);
+    snprintf(kindex_text, sizeof(kindex_text), "%d", ham->kindex);
+    build_band_summary_text(ham, "day", hf_day, sizeof(hf_day));
+    build_band_summary_text(ham, "night", hf_night, sizeof(hf_night));
+
+    template_token_t tokens[] = {
+        {"updated", ham->updated},
+        {"kindex", kindex_text},
+        {"geomagfield", ham->geomagfield[0] ? ham->geomagfield : "未报"},
+        {"hf_day", hf_day},
+        {"hf_night", hf_night}
+    };
+    render_template(out, out_len, tmpl, tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
 static void build_weather_section(const weather_data_t *weather, char *out, size_t out_len) {
@@ -1329,22 +1435,39 @@ static void build_solar_section(const hamqsl_data_t *ham, char *summary, size_t 
         summary, geomag_g, ham->solarwind, ham->magneticfield, ham->aurora, ham->signalnoise);
 }
 
-static void build_meteor_section(const meteor_data_t *meteor, char *out, size_t out_len) {
+static void build_meteor_section(const settings_t *settings, const meteor_data_t *meteor, char *out, size_t out_len) {
+    char meteor_name_cn[MAX_TEXT];
+    char peak_date_cn[MAX_TEXT];
+    char days_left_text[32];
+    char countdown_text[MAX_TEXT];
+    char moon_percent_text[32];
+    const char *tmpl = settings->compact_template_meteor[0] ? settings->compact_template_meteor :
+        "流星雨倒计时：{{meteor_name_cn}}\n峰值日期：{{peak_date_cn}}\n倒计时：{{countdown_text}}";
     if (!meteor->valid) {
         copy_string(out, out_len, "流星雨倒计时暂不可用。");
         return;
     }
-    if (meteor->summary[0]) {
-        copy_string(out, out_len, meteor->summary);
+    if (!meteor->shower_name[0] || !meteor->peak_label[0]) {
+        copy_string(out, out_len, meteor->summary[0] ? meteor->summary : "流星雨倒计时暂不可用。");
         return;
     }
-    if (meteor->days_left >= 0) {
-        snprintf(out, out_len, "最近主要流星雨：%s，峰值夜 %s，距今约 %d 天，月相约 %d%%。",
-            meteor->shower_name, meteor->peak_label, meteor->days_left, meteor->moon_percent);
-    } else {
-        snprintf(out, out_len, "最近主要流星雨：%s，峰值夜 %s，月相约 %d%%。",
-            meteor->shower_name, meteor->peak_label, meteor->moon_percent);
-    }
+
+    copy_string(meteor_name_cn, sizeof(meteor_name_cn), meteor_name_to_chinese(meteor->shower_name));
+    format_peak_date_cn_text(meteor->peak_label, peak_date_cn, sizeof(peak_date_cn));
+    snprintf(days_left_text, sizeof(days_left_text), "%d", meteor->days_left);
+    format_meteor_countdown_text(meteor->days_left, countdown_text, sizeof(countdown_text));
+    snprintf(moon_percent_text, sizeof(moon_percent_text), "%d", meteor->moon_percent);
+
+    template_token_t tokens[] = {
+        {"meteor_name", meteor->shower_name},
+        {"meteor_name_cn", meteor_name_cn},
+        {"peak_date", meteor->peak_label},
+        {"peak_date_cn", peak_date_cn},
+        {"days_left", days_left_text},
+        {"countdown_text", countdown_text},
+        {"moon_percent", moon_percent_text}
+    };
+    render_template(out, out_len, tmpl, tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
 static void build_satellite_section(const satellite_summary_t *satellite, char *out, size_t out_len) {
@@ -1382,32 +1505,20 @@ static void build_sixm_section(const settings_t *settings, const snapshot_t *sna
 }
 
 static void build_sources_section(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
-    sb_t sb;
-    sb_init(&sb);
-    if (settings->include_source_urls) {
-        if (snapshot->hamqsl.valid) {
-            sb_appendf(&sb, "HAMqsl：%s", snapshot->hamqsl.source_url[0] ? snapshot->hamqsl.source_url : "https://www.hamqsl.com/solarxml.php");
-        }
-        if (snapshot->tropo.valid) {
-            sb_appendf(&sb, "%sF5LEN Tropo：%s", sb.len ? "\n" : "", snapshot->tropo.page_url[0] ? snapshot->tropo.page_url : settings->tropo_source_url);
-        }
-        if (snapshot->meteor.valid) {
-            sb_appendf(&sb, "%s流星雨：%s", sb.len ? "\n" : "", snapshot->meteor.source_url[0] ? snapshot->meteor.source_url : settings->meteor_source_url);
-        }
-        if (snapshot->satellite.valid && settings->satellite_source_url[0]) {
-            sb_appendf(&sb, "%s卫星星历：%s", sb.len ? "\n" : "", settings->satellite_source_url);
-        }
-        sb_appendf(&sb, "%s天气：Open-Meteo", sb.len ? "\n" : "");
-        sb_appendf(&sb, "%sPSK 实时：mqtt.pskreporter.info", sb.len ? "\n" : "");
-    }
+    template_token_t tokens[] = {
+        {"hamqsl_widget_url", settings->hamqsl_widget_url}
+    };
     if (settings->include_hamqsl_widget && settings->hamqsl_widget_url[0]) {
-        sb_appendf(&sb, "%sHAMqsl 日图：[CQ:image,file=%s]", sb.len ? "\n" : "", settings->hamqsl_widget_url);
+        render_template(out, out_len,
+            settings->compact_template_hamqsl_image[0] ? settings->compact_template_hamqsl_image :
+            "HAMqsl 日图：[CQ:image,file={{hamqsl_widget_url}}]",
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+    } else if (settings->include_source_urls) {
+        snprintf(out, out_len, "HAMqsl：%s",
+            snapshot->hamqsl.source_url[0] ? snapshot->hamqsl.source_url : "https://www.hamqsl.com/solarxml.php");
+    } else {
+        out[0] = '\0';
     }
-    if (settings->tropo_send_image && snapshot->tropo.valid && snapshot->tropo.image_url[0]) {
-        sb_appendf(&sb, "%sF5LEN 图：[CQ:image,file=%s]", sb.len ? "\n" : "", snapshot->tropo.image_url);
-    }
-    copy_string(out, out_len, sb.data ? sb.data : "");
-    sb_free(&sb);
 }
 
 static void build_analysis_summary(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
@@ -1436,7 +1547,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     build_tropo_section(&settings, &snapshot->tropo, snapshot->section_tropo, sizeof(snapshot->section_tropo));
     build_solar_section(&snapshot->hamqsl, snapshot->sun_summary, sizeof(snapshot->sun_summary),
         snapshot->section_solar, sizeof(snapshot->section_solar));
-    build_meteor_section(&snapshot->meteor, snapshot->section_meteor, sizeof(snapshot->section_meteor));
+    build_meteor_section(&settings, &snapshot->meteor, snapshot->section_meteor, sizeof(snapshot->section_meteor));
     build_satellite_section(&snapshot->satellite, snapshot->section_satellite, sizeof(snapshot->section_satellite));
     build_sixm_section(&settings, snapshot, snapshot->section_6m, sizeof(snapshot->section_6m));
     build_sources_section(&settings, snapshot, snapshot->section_sources, sizeof(snapshot->section_sources));
@@ -1451,6 +1562,14 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char weather_score[32];
     char tropo_score[32];
     char meteor_days_left[32];
+    char ham_updated[MAX_TEXT];
+    char ham_geomagfield_text[MAX_TEXT];
+    char hf_day[512];
+    char hf_night[512];
+    char meteor_name_cn[MAX_TEXT];
+    char peak_date_cn[MAX_TEXT];
+    char countdown_text[MAX_TEXT];
+    char moon_percent_text[32];
     format_time_local(snapshot->refreshed_at, refreshed, sizeof(refreshed));
     snprintf(ham_solarflux, sizeof(ham_solarflux), "%d", snapshot->hamqsl.solarflux);
     snprintf(ham_aindex, sizeof(ham_aindex), "%d", snapshot->hamqsl.aindex);
@@ -1460,6 +1579,15 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     snprintf(weather_score, sizeof(weather_score), "%d", snapshot->weather.sixm_weather_score);
     snprintf(tropo_score, sizeof(tropo_score), "%d", snapshot->tropo.score);
     snprintf(meteor_days_left, sizeof(meteor_days_left), "%d", snapshot->meteor.days_left);
+    copy_string(ham_updated, sizeof(ham_updated), snapshot->hamqsl.valid ? snapshot->hamqsl.updated : "");
+    copy_string(ham_geomagfield_text, sizeof(ham_geomagfield_text),
+        snapshot->hamqsl.valid ? snapshot->hamqsl.geomagfield : "");
+    build_band_summary_text(&snapshot->hamqsl, "day", hf_day, sizeof(hf_day));
+    build_band_summary_text(&snapshot->hamqsl, "night", hf_night, sizeof(hf_night));
+    copy_string(meteor_name_cn, sizeof(meteor_name_cn), meteor_name_to_chinese(snapshot->meteor.shower_name));
+    format_peak_date_cn_text(snapshot->meteor.peak_label, peak_date_cn, sizeof(peak_date_cn));
+    format_meteor_countdown_text(snapshot->meteor.days_left, countdown_text, sizeof(countdown_text));
+    snprintf(moon_percent_text, sizeof(moon_percent_text), "%d", snapshot->meteor.moon_percent);
 
     const char *sixm_label = sixm_alert_label_from_snapshot(snapshot, &settings);
     template_token_t tokens[] = {
@@ -1477,6 +1605,11 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"section_satellite", snapshot->section_satellite},
         {"section_sources", snapshot->section_sources},
         {"analysis_summary", snapshot->analysis_summary},
+        {"updated", ham_updated},
+        {"kindex", ham_kindex},
+        {"geomagfield", ham_geomagfield_text},
+        {"hf_day", hf_day},
+        {"hf_night", hf_night},
         {"ham_solarflux", ham_solarflux},
         {"ham_aindex", ham_aindex},
         {"ham_kindex", ham_kindex},
@@ -1489,8 +1622,15 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"tropo_category", snapshot->tropo.category},
         {"tropo_score", tropo_score},
         {"meteor_name", snapshot->meteor.shower_name},
+        {"meteor_name_cn", meteor_name_cn},
+        {"peak_date", snapshot->meteor.peak_label},
+        {"peak_date_cn", peak_date_cn},
         {"meteor_peak", snapshot->meteor.peak_label},
         {"meteor_days_left", meteor_days_left},
+        {"days_left", meteor_days_left},
+        {"countdown_text", countdown_text},
+        {"moon_percent", moon_percent_text},
+        {"hamqsl_widget_url", settings.hamqsl_widget_url},
         {"geomag_g", ham_geomag_g},
         {"sixm_alert_level", sixm_label}
     };

@@ -133,33 +133,6 @@ static int message_has_remote_cq_image(const char *message) {
          strstr(message, "[CQ:image,file=https://") != NULL);
 }
 
-static char *base64_encode_alloc(const unsigned char *data, size_t len) {
-    static const char alphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t out_len = ((len + 2) / 3) * 4;
-    char *out = malloc(out_len + 1);
-    size_t in_pos = 0;
-    size_t out_pos = 0;
-    if (!out) {
-        return NULL;
-    }
-
-    while (in_pos < len) {
-        size_t remaining = len - in_pos;
-        unsigned int octet_a = data[in_pos++];
-        unsigned int octet_b = remaining > 1 ? data[in_pos++] : 0;
-        unsigned int octet_c = remaining > 2 ? data[in_pos++] : 0;
-        unsigned int triple = (octet_a << 16) | (octet_b << 8) | octet_c;
-
-        out[out_pos++] = alphabet[(triple >> 18) & 0x3Fu];
-        out[out_pos++] = alphabet[(triple >> 12) & 0x3Fu];
-        out[out_pos++] = remaining > 1 ? alphabet[(triple >> 6) & 0x3Fu] : '=';
-        out[out_pos++] = remaining > 2 ? alphabet[triple & 0x3Fu] : '=';
-    }
-    out[out_len] = '\0';
-    return out;
-}
-
 static char *message_replace_remote_cq_images_with_base64(const char *message, app_t *app) {
     sb_t out;
     int replaced = 0;
@@ -652,6 +625,35 @@ int send_report_to_all_targets(app_t *app, const char *message) {
 int send_report_kind_to_all_targets(app_t *app, const char *report_kind) {
     /* 发送前先让缓存进入“尽可能新”的状态。
      * 非 force 模式会优先走周期抓取逻辑，而不是每次都全量重抓。 */
+    if (report_kind && strcmp(report_kind, "pskmap") == 0) {
+        target_t targets[MAX_TARGETS];
+        int count = 0;
+        int sent = 0;
+        int failed = 0;
+        settings_t settings;
+
+        pthread_mutex_lock(&app->cache_mutex);
+        settings = app->settings;
+        pthread_mutex_unlock(&app->cache_mutex);
+        storage_load_targets(app, targets, MAX_TARGETS, &count);
+
+        for (int i = 0; i < count; ++i) {
+            if (!targets[i].enabled) {
+                continue;
+            }
+            if (psk_send_snapshot_image(app, targets[i].type, targets[i].target_id) == 0) {
+                sent++;
+            } else {
+                failed++;
+            }
+            if (i + 1 < count && settings.onebot_send_delay_ms > 0) {
+                app_sleep_ms(settings.onebot_send_delay_ms);
+            }
+        }
+        app_log(app, failed ? "WARN" : "INFO", "PSKReporter 快照群发完成: success=%d failed=%d", sent, failed);
+        return sent > 0 ? sent : -1;
+    }
+
     refresh_snapshot(app, 0);
     pthread_mutex_lock(&app->cache_mutex);
     snapshot_t snapshot = app->snapshot;

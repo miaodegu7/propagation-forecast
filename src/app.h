@@ -208,11 +208,15 @@ typedef struct {
     char report_template_geomag[MAX_TEMPLATE_TEXT];
     char report_template_open6m[MAX_TEMPLATE_TEXT];
     char help_template[MAX_TEMPLATE_TEXT];
+    char compact_template_hamqsl[MAX_TEMPLATE_TEXT];
+    char compact_template_meteor[MAX_TEMPLATE_TEXT];
+    char compact_template_hamqsl_image[MAX_TEMPLATE_TEXT];
 
     char trigger_full[MAX_HUGE_TEXT];
     char trigger_6m[MAX_HUGE_TEXT];
     char trigger_solar[MAX_HUGE_TEXT];
     char trigger_help[MAX_HUGE_TEXT];
+    char trigger_pskmap[MAX_HUGE_TEXT];
 } settings_t;
 
 typedef struct {
@@ -503,6 +507,7 @@ int csv_contains_ci(const char *csv, const char *needle);
 double clamp_double(double value, double min_value, double max_value);
 int clamp_int(int value, int min_value, int max_value);
 int base64_decode(const char *input, unsigned char *output, size_t *output_len);
+char *base64_encode_alloc(const unsigned char *data, size_t len);
 void app_log(app_t *app, const char *level, const char *fmt, ...);
 char *http_get_text(const char *url, const char *bearer_token, long *status_code);
 char *http_get_binary(const char *url, const char *bearer_token, long *status_code, size_t *out_size);
@@ -518,6 +523,7 @@ void app_open_admin_console(const settings_t *settings);
 void app_write_boot_log(const char *fmt, ...);
 void app_set_last_error(app_t *app, const char *fmt, ...);
 void app_show_startup_error(const char *title, const char *message);
+int app_capture_html_to_png(const char *html_utf8, const char *stem, unsigned char **png_data, size_t *png_size, char *detail, size_t detail_len);
 #ifdef _WIN32
 int app_windows_path_to_utf16(const char *path, wchar_t *out, size_t out_len);
 #endif
@@ -572,6 +578,7 @@ int psk_start(app_t *app);
 void psk_stop(app_t *app);
 void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *out);
 void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, int max_rows);
+int psk_send_snapshot_image(app_t *app, target_type_t type, const char *target_id);
 
 /* http_server.c：内置后台 */
 int http_server_run(app_t *app);

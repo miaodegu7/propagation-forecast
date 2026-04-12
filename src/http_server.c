@@ -488,7 +488,8 @@ static void save_settings_from_form(app_t *app, const char *body) {
         "hamqsl_widget_url", "hamqsl_selected_fields", "include_source_urls", "include_hamqsl_widget",
         "report_template_full", "report_template_6m", "report_template_solar",
         "report_template_geomag", "report_template_open6m", "help_template",
-        "trigger_full", "trigger_6m", "trigger_solar", "trigger_help"
+        "compact_template_hamqsl", "compact_template_meteor", "compact_template_hamqsl_image",
+        "trigger_full", "trigger_6m", "trigger_solar", "trigger_help", "trigger_pskmap"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
         save_form_setting(app, body, keys[i]);
@@ -651,6 +652,7 @@ static char *render_dashboard(app_t *app) {
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"full\"><button type=\"submit\">发送完整简报</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"6m\"><button type=\"submit\">发送 6m 简报</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"solar\"><button type=\"submit\">发送太阳简报</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"pskmap\"><button type=\"submit\">发送 PSK 图</button></form>"
         "</div></section>");
 
     sb_append(&page, "<section class=\"card\"><h2>消息预览</h2><pre>");
@@ -706,6 +708,7 @@ static char *render_dashboard(app_t *app) {
     append_select_yesno(&page, "meteor_enabled", "流星雨提醒", settings.meteor_enabled);
     append_input(&page, "meteor_selected_showers", "流星雨筛选(csv)", settings.meteor_selected_showers, "text");
     append_input_int(&page, "meteor_max_items", "流星雨最多条数", settings.meteor_max_items);
+    sb_append(&page, "<p class=\"help\">流星雨筛选现在支持中英文名称混填，例如：Lyrids, 天琴座流星雨。</p>");
     append_input(&page, "hamqsl_widget_url", "HAMqsl 小组件图", settings.hamqsl_widget_url, "text");
     append_select_yesno(&page, "include_hamqsl_widget", "发送 HAMqsl 图", settings.include_hamqsl_widget);
     append_select_yesno(&page, "include_source_urls", "附带来源网址", settings.include_source_urls);
@@ -731,13 +734,19 @@ static char *render_dashboard(app_t *app) {
     append_textarea(&page, "report_template_geomag", "地磁告警模板", settings.report_template_geomag, 4);
     append_textarea(&page, "report_template_open6m", "6m 告警模板", settings.report_template_open6m, 5);
     append_textarea(&page, "help_template", "帮助回复模板", settings.help_template, 4);
+    append_textarea(&page, "compact_template_hamqsl", "HAMqsl 精简段模板", settings.compact_template_hamqsl, 5);
+    append_textarea(&page, "compact_template_meteor", "流星雨精简段模板", settings.compact_template_meteor, 5);
+    append_textarea(&page, "compact_template_hamqsl_image", "HAMqsl 日图段模板", settings.compact_template_hamqsl_image, 3);
     sb_append(&page, "<div class=\"three\">");
     append_input(&page, "trigger_full", "完整简报问词", settings.trigger_full, "text");
     append_input(&page, "trigger_6m", "6m 问词", settings.trigger_6m, "text");
     append_input(&page, "trigger_solar", "太阳问词", settings.trigger_solar, "text");
     sb_append(&page, "</div>");
+    sb_append(&page, "<div class=\"two\">");
     append_input(&page, "trigger_help", "帮助问词", settings.trigger_help, "text");
-    sb_append(&page, "<p class=\"help\">可用模板标记：{{bot_name}} {{station_name}} {{station_grid}} {{psk_grids}} {{section_hamqsl}} {{section_weather}} {{section_tropo}} {{section_6m}} {{section_solar}} {{section_meteor}} {{section_satellite}} {{section_sources}} {{analysis_summary}} {{geomag_g}} {{sixm_alert_level}}</p><div class=\"toolbar\"><button type=\"submit\">保存模板</button></div></form></section>");
+    append_input(&page, "trigger_pskmap", "PSK 图问词", settings.trigger_pskmap, "text");
+    sb_append(&page, "</div>");
+    sb_append(&page, "<p class=\"help\">可用模板标记：{{bot_name}} {{station_name}} {{station_grid}} {{psk_grids}} {{section_hamqsl}} {{section_weather}} {{section_tropo}} {{section_6m}} {{section_solar}} {{section_meteor}} {{section_satellite}} {{section_sources}} {{analysis_summary}} {{refreshed_at}} {{geomag_g}} {{sixm_alert_level}} {{updated}} {{kindex}} {{geomagfield}} {{hf_day}} {{hf_night}} {{ham_solarflux}} {{ham_aindex}} {{ham_kindex}} {{ham_xray}} {{ham_sunspots}} {{ham_muf}} {{weather_level}} {{weather_score}} {{tropo_category}} {{tropo_score}} {{meteor_name}} {{meteor_name_cn}} {{meteor_peak}} {{meteor_days_left}} {{peak_date}} {{peak_date_cn}} {{days_left}} {{countdown_text}} {{moon_percent}} {{hamqsl_widget_url}}</p><p class=\"help\">推荐做法：完整简报里保留 {{section_hamqsl}} / {{section_meteor}} / {{section_sources}}，需要更细时再在下面三个精简模板里改固定文字。</p><div class=\"toolbar\"><button type=\"submit\">保存模板</button></div></form></section>");
     sb_append(&page, "</div>");
 
     sb_append(&page, "<div class=\"grid\">");
@@ -756,7 +765,7 @@ static char *render_dashboard(app_t *app) {
     sb_append(&page, schedule_rows.data ? schedule_rows.data : "");
     sb_append(&page, "</table><h3>新增定时</h3><form method=\"post\" action=\"/schedules/add\"><div class=\"three\">");
     append_input(&page, "label", "任务名", "", "text");
-    sb_append(&page, "<label><span>简报类型</span><select name=\"report_kind\"><option value=\"full\">full</option><option value=\"6m\">6m</option><option value=\"solar\">solar</option><option value=\"help\">help</option></select></label>");
+    sb_append(&page, "<label><span>简报类型</span><select name=\"report_kind\"><option value=\"full\">full</option><option value=\"6m\">6m</option><option value=\"solar\">solar</option><option value=\"pskmap\">pskmap</option><option value=\"help\">help</option></select></label>");
     append_input(&page, "hhmm", "时间(HH:MM)", "", "text");
     append_select_yesno(&page, "enabled", "启用", 1);
     sb_append(&page, "</div><div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">添加定时</button></div></form></section>");
@@ -958,6 +967,8 @@ static void handle_onebot_webhook(app_t *app, app_socket_t fd, const http_reques
     const char *reply = NULL;
     if (message_matches_trigger_csv(raw_message, settings.trigger_help)) {
         reply = snapshot.report_help;
+    } else if (message_matches_trigger_csv(raw_message, settings.trigger_pskmap)) {
+        psk_send_snapshot_image(app, type, target_id);
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_6m)) {
         reply = snapshot.report_6m;
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_solar)) {

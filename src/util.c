@@ -1,5 +1,8 @@
 #include "app.h"
 #include <locale.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #ifdef _WIN32
 static int utf16_to_utf8(const wchar_t *src, char *dst, size_t dst_len) {
@@ -375,6 +378,33 @@ int base64_decode(const char *input, unsigned char *output, size_t *output_len) 
     return 0;
 }
 
+char *base64_encode_alloc(const unsigned char *data, size_t len) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t out_len = ((len + 2) / 3) * 4;
+    char *out = malloc(out_len + 1);
+    size_t in_pos = 0;
+    size_t out_pos = 0;
+    if (!out) {
+        return NULL;
+    }
+
+    while (in_pos < len) {
+        size_t remaining = len - in_pos;
+        unsigned int octet_a = data[in_pos++];
+        unsigned int octet_b = remaining > 1 ? data[in_pos++] : 0;
+        unsigned int octet_c = remaining > 2 ? data[in_pos++] : 0;
+        unsigned int triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+
+        out[out_pos++] = alphabet[(triple >> 18) & 0x3Fu];
+        out[out_pos++] = alphabet[(triple >> 12) & 0x3Fu];
+        out[out_pos++] = remaining > 1 ? alphabet[(triple >> 6) & 0x3Fu] : '=';
+        out[out_pos++] = remaining > 2 ? alphabet[triple & 0x3Fu] : '=';
+    }
+    out[out_len] = '\0';
+    return out;
+}
+
 static void curl_global_once(void) {
     static pthread_mutex_t once_mutex = PTHREAD_MUTEX_INITIALIZER;
     static int initialized = 0;
@@ -734,4 +764,331 @@ void app_log(app_t *app, const char *level, const char *fmt, ...) {
     }
     sqlite3_finalize(stmt);
     pthread_mutex_unlock(&app->db_mutex);
+}
+
+static int write_utf8_text_file(const char *path, const char *text) {
+#ifdef _WIN32
+    wchar_t wide_path[1024];
+    FILE *fp = NULL;
+    if (app_windows_path_to_utf16(path, wide_path, sizeof(wide_path) / sizeof(wide_path[0])) != 0) {
+        return -1;
+    }
+    fp = _wfopen(wide_path, L"wb");
+#else
+    FILE *fp = fopen(path, "wb");
+#endif
+    if (!fp) {
+        return -1;
+    }
+    if (text && *text) {
+        fwrite(text, 1, strlen(text), fp);
+    }
+    fclose(fp);
+    return 0;
+}
+
+static int read_binary_file_alloc(const char *path, unsigned char **out_data, size_t *out_size) {
+    long size = 0;
+    size_t read_size = 0;
+    unsigned char *buffer = NULL;
+    FILE *fp = NULL;
+
+    if (!out_data || !out_size) {
+        return -1;
+    }
+    *out_data = NULL;
+    *out_size = 0;
+
+#ifdef _WIN32
+    wchar_t wide_path[1024];
+    if (app_windows_path_to_utf16(path, wide_path, sizeof(wide_path) / sizeof(wide_path[0])) != 0) {
+        return -1;
+    }
+    fp = _wfopen(wide_path, L"rb");
+#else
+    fp = fopen(path, "rb");
+#endif
+    if (!fp) {
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return -1;
+    }
+    size = ftell(fp);
+    if (size < 0) {
+        fclose(fp);
+        return -1;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    buffer = malloc((size_t)size);
+    if (!buffer) {
+        fclose(fp);
+        return -1;
+    }
+    read_size = fread(buffer, 1, (size_t)size, fp);
+    fclose(fp);
+    if (read_size != (size_t)size) {
+        free(buffer);
+        return -1;
+    }
+
+    *out_data = buffer;
+    *out_size = read_size;
+    return 0;
+}
+
+static void delete_file_if_exists(const char *path) {
+    if (!path || !*path) {
+        return;
+    }
+#ifdef _WIN32
+    wchar_t wide_path[1024];
+    if (app_windows_path_to_utf16(path, wide_path, sizeof(wide_path) / sizeof(wide_path[0])) == 0) {
+        _wremove(wide_path);
+    }
+#else
+    unlink(path);
+#endif
+}
+
+static int create_temp_html_png_paths(const char *stem, char *html_path, size_t html_len, char *png_path, size_t png_len) {
+    const char *prefix = (stem && *stem) ? stem : "propagation";
+#ifdef _WIN32
+    wchar_t temp_dir[MAX_PATH];
+    wchar_t temp_file[MAX_PATH];
+    char temp_utf8[1024];
+    char *dot = NULL;
+
+    if (!GetTempPathW((DWORD)(sizeof(temp_dir) / sizeof(temp_dir[0])), temp_dir)) {
+        return -1;
+    }
+    if (!GetTempFileNameW(temp_dir, L"psk", 0, temp_file)) {
+        return -1;
+    }
+    DeleteFileW(temp_file);
+    if (utf16_to_utf8(temp_file, temp_utf8, sizeof(temp_utf8)) != 0) {
+        return -1;
+    }
+    dot = strrchr(temp_utf8, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+    snprintf(html_path, html_len, "%s-%s.html", temp_utf8, prefix);
+    snprintf(png_path, png_len, "%s-%s.png", temp_utf8, prefix);
+    return 0;
+#else
+    char base_template[] = "/tmp/pskXXXXXX";
+    int fd = mkstemp(base_template);
+    if (fd < 0) {
+        return -1;
+    }
+    close(fd);
+    unlink(base_template);
+    snprintf(html_path, html_len, "%s-%s.html", base_template, prefix);
+    snprintf(png_path, png_len, "%s-%s.png", base_template, prefix);
+    return 0;
+#endif
+}
+
+static int path_to_file_url(const char *path, char *out, size_t out_len) {
+    size_t pos = 0;
+    if (!path || !out || out_len == 0) {
+        return -1;
+    }
+    out[0] = '\0';
+
+#ifdef _WIN32
+    pos += (size_t)snprintf(out + pos, out_len - pos, "file:///");
+#else
+    pos += (size_t)snprintf(out + pos, out_len - pos, "file://");
+#endif
+
+    for (const unsigned char *p = (const unsigned char *)path; *p && pos + 4 < out_len; ++p) {
+        unsigned char ch = *p == '\\' ? '/' : *p;
+        if (isalnum(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == ':') {
+            out[pos++] = (char)ch;
+        } else {
+            snprintf(out + pos, out_len - pos, "%%%02X", ch);
+            pos += 3;
+        }
+    }
+    out[pos] = '\0';
+    return 0;
+}
+
+#ifdef _WIN32
+static int find_headless_browser_path(char *out, size_t out_len) {
+    char base[MAX_PATH];
+    char candidate[MAX_PATH * 2];
+    const char *tails[] = {
+        "Microsoft\\Edge\\Application\\msedge.exe",
+        "Google\\Chrome\\Application\\chrome.exe",
+        "Chromium\\Application\\chrome.exe"
+    };
+    const char *envs[] = {"ProgramFiles(x86)", "ProgramFiles", "LocalAppData"};
+
+    for (size_t e = 0; e < sizeof(envs) / sizeof(envs[0]); ++e) {
+        DWORD got = GetEnvironmentVariableA(envs[e], base, (DWORD)sizeof(base));
+        if (got == 0 || got >= sizeof(base)) {
+            continue;
+        }
+        for (size_t i = 0; i < sizeof(tails) / sizeof(tails[0]); ++i) {
+            snprintf(candidate, sizeof(candidate), "%s\\%s", base, tails[i]);
+            if (GetFileAttributesA(candidate) != INVALID_FILE_ATTRIBUTES) {
+                copy_string(out, out_len, candidate);
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
+
+static int run_browser_capture(const char *html_path, const char *png_path, char *detail, size_t detail_len) {
+    char browser_path[MAX_PATH * 2];
+    char file_url[2048];
+    wchar_t browser_w[1024];
+    wchar_t screenshot_arg[1400];
+    wchar_t url_w[2048];
+
+    if (detail && detail_len > 0) {
+        detail[0] = '\0';
+    }
+    if (find_headless_browser_path(browser_path, sizeof(browser_path)) != 0) {
+        copy_string(detail, detail_len, "未找到 Edge/Chrome，无法生成快照图");
+        return -1;
+    }
+    if (path_to_file_url(html_path, file_url, sizeof(file_url)) != 0) {
+        copy_string(detail, detail_len, "本地快照 URL 构建失败");
+        return -1;
+    }
+    if (app_windows_path_to_utf16(browser_path, browser_w, sizeof(browser_w) / sizeof(browser_w[0])) != 0 ||
+        app_windows_path_to_utf16(png_path, screenshot_arg, sizeof(screenshot_arg) / sizeof(screenshot_arg[0])) != 0 ||
+        app_windows_path_to_utf16(file_url, url_w, sizeof(url_w) / sizeof(url_w[0])) != 0) {
+        copy_string(detail, detail_len, "浏览器截图参数转换失败");
+        return -1;
+    }
+
+    {
+        wchar_t screenshot_opt[1400];
+        intptr_t rc = 0;
+        _snwprintf(screenshot_opt, sizeof(screenshot_opt) / sizeof(screenshot_opt[0]),
+            L"--screenshot=%ls", screenshot_arg);
+        rc = _wspawnl(_P_WAIT, browser_w, browser_w,
+            L"--headless=new",
+            L"--disable-gpu",
+            L"--hide-scrollbars",
+            L"--window-size=1400,980",
+            screenshot_opt,
+            url_w,
+            NULL);
+        if (rc != 0) {
+            snprintf(detail, detail_len, "浏览器截图失败，退出码=%lld", (long long)rc);
+            return -1;
+        }
+    }
+    return 0;
+}
+#else
+static const char *linux_browser_candidates[] = {
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "google-chrome",
+    "chromium-browser",
+    "chromium",
+    "msedge"
+};
+
+static int run_browser_capture(const char *html_path, const char *png_path, char *detail, size_t detail_len) {
+    char file_url[2048];
+    char screenshot_opt[1200];
+    int status = -1;
+
+    if (detail && detail_len > 0) {
+        detail[0] = '\0';
+    }
+    if (path_to_file_url(html_path, file_url, sizeof(file_url)) != 0) {
+        copy_string(detail, detail_len, "本地快照 URL 构建失败");
+        return -1;
+    }
+    snprintf(screenshot_opt, sizeof(screenshot_opt), "--screenshot=%s", png_path);
+
+    for (size_t i = 0; i < sizeof(linux_browser_candidates) / sizeof(linux_browser_candidates[0]); ++i) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            execlp(linux_browser_candidates[i], linux_browser_candidates[i],
+                "--headless=new",
+                "--disable-gpu",
+                "--hide-scrollbars",
+                "--window-size=1400,980",
+                screenshot_opt,
+                file_url,
+                (char *)NULL);
+            execlp(linux_browser_candidates[i], linux_browser_candidates[i],
+                "--headless",
+                "--disable-gpu",
+                "--hide-scrollbars",
+                "--window-size=1400,980",
+                screenshot_opt,
+                file_url,
+                (char *)NULL);
+            _exit(127);
+        }
+        if (pid < 0) {
+            continue;
+        }
+        if (waitpid(pid, &status, 0) >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            return 0;
+        }
+    }
+
+    copy_string(detail, detail_len, "未找到可用的无头浏览器，无法生成快照图");
+    return -1;
+}
+#endif
+
+int app_capture_html_to_png(const char *html_utf8, const char *stem, unsigned char **png_data, size_t *png_size, char *detail, size_t detail_len) {
+    char html_path[1024];
+    char png_path[1024];
+    int rc = -1;
+
+    if (png_data) {
+        *png_data = NULL;
+    }
+    if (png_size) {
+        *png_size = 0;
+    }
+    if (detail && detail_len > 0) {
+        detail[0] = '\0';
+    }
+    if (!html_utf8 || !png_data || !png_size) {
+        copy_string(detail, detail_len, "截图参数不完整");
+        return -1;
+    }
+    if (create_temp_html_png_paths(stem, html_path, sizeof(html_path), png_path, sizeof(png_path)) != 0) {
+        copy_string(detail, detail_len, "临时文件路径创建失败");
+        return -1;
+    }
+    if (write_utf8_text_file(html_path, html_utf8) != 0) {
+        copy_string(detail, detail_len, "快照 HTML 写入失败");
+        delete_file_if_exists(html_path);
+        delete_file_if_exists(png_path);
+        return -1;
+    }
+    if (run_browser_capture(html_path, png_path, detail, detail_len) != 0) {
+        delete_file_if_exists(html_path);
+        delete_file_if_exists(png_path);
+        return -1;
+    }
+    rc = read_binary_file_alloc(png_path, png_data, png_size);
+    if (rc != 0) {
+        copy_string(detail, detail_len, "截图输出文件读取失败");
+    }
+    delete_file_if_exists(html_path);
+    delete_file_if_exists(png_path);
+    return rc == 0 ? 0 : -1;
 }

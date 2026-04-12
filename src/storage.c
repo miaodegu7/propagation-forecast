@@ -24,6 +24,21 @@ static int upsert_default(sqlite3 *db, const char *key, const char *value) {
     return (rc == SQLITE_DONE) ? SQLITE_OK : rc;
 }
 
+static int set_setting(sqlite3 *db, const char *key, const char *value) {
+    sqlite3_stmt *stmt = NULL;
+    const char *sql = "INSERT INTO settings(key, value) VALUES(?, ?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value";
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return rc;
+    }
+    sqlite3_bind_text(stmt, 1, key, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, value ? value : "", -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? SQLITE_OK : rc;
+}
+
 static int load_setting_text(sqlite3 *db, const char *key, char *out, size_t out_len) {
     sqlite3_stmt *stmt = NULL;
     const char *sql = "SELECT value FROM settings WHERE key = ?";
@@ -122,11 +137,11 @@ static int seed_defaults(sqlite3 *db) {
         {"satellite_max_items", "8"},
         {"hamqsl_widget_url", "https://www.hamqsl.com/solar101sc.php"},
         {"hamqsl_selected_fields", "solarflux,aindex,kindex,xray,sunspots,solarwind,magneticfield,geomagfield,signalnoise,muf,fof2,muffactor,aurora"},
-        {"include_source_urls", "1"},
+        {"include_source_urls", "0"},
         {"include_hamqsl_widget", "1"},
         {"report_template_full",
-            "{{bot_name}} {{station_name}}({{station_grid}}) 每日传播简报\n"
-            "{{section_hamqsl}}\n{{section_weather}}\n{{section_tropo}}\n{{section_6m}}\n{{section_meteor}}\n{{section_satellite}}\n{{section_sources}}"},
+            "{{bot_name}} {{station_name}}({{station_grid}}) 每日简报\n"
+            "{{section_hamqsl}}\n{{section_meteor}}\n{{section_sources}}"},
         {"report_template_6m",
             "{{bot_name}} 6米传播提醒\n{{section_tropo}}\n{{section_weather}}\n{{section_6m}}\n{{section_satellite}}\n{{section_sources}}"},
         {"report_template_solar",
@@ -136,14 +151,26 @@ static int seed_defaults(sqlite3 *db) {
         {"report_template_open6m",
             "{{bot_name}} 6米开口提醒\n级别：{{sixm_alert_level}}\n{{section_tropo}}\n{{section_weather}}\n{{section_6m}}\n{{section_sources}}"},
         {"help_template",
-            "可用关键词：传播 / 6米 / 太阳 / 帮助\n"
+            "可用关键词：传播 / 6米 / 太阳 / PSK图 / 帮助\n"
             "当前机器人：{{bot_name}}\n"
             "台站：{{station_name}} {{station_grid}}\n"
             "PSK监控网格：{{psk_grids}}"},
+        {"compact_template_hamqsl",
+            "更新时间：{{updated}}\n"
+            "K 指数：{{kindex}}（地磁：{{geomagfield}}）\n"
+            "HF 白天：{{hf_day}}\n"
+            "HF 夜间：{{hf_night}}"},
+        {"compact_template_meteor",
+            "流星雨倒计时：{{meteor_name_cn}}\n"
+            "峰值日期：{{peak_date_cn}}\n"
+            "倒计时：{{countdown_text}}"},
+        {"compact_template_hamqsl_image",
+            "HAMqsl 日图：[CQ:image,file={{hamqsl_widget_url}}]"},
         {"trigger_full", "传播,预报,简报"},
         {"trigger_6m", "6m,6米,六米"},
         {"trigger_solar", "太阳,磁暴,空间天气"},
-        {"trigger_help", "帮助,help,菜单"}
+        {"trigger_help", "帮助,help,菜单"},
+        {"trigger_pskmap", "PSK图,PSK地图,pskreporter,spot图"}
     };
 
     for (size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); ++i) {
@@ -251,6 +278,39 @@ int storage_init(app_t *app, const char *db_path) {
         app->db = NULL;
         return -1;
     }
+
+    {
+        char template_value[MAX_TEMPLATE_TEXT];
+        const char *legacy_template =
+            "{{bot_name}} {{station_name}}({{station_grid}}) 每日传播简报\n"
+            "{{section_hamqsl}}\n{{section_weather}}\n{{section_tropo}}\n{{section_6m}}\n{{section_meteor}}\n{{section_satellite}}\n{{section_sources}}";
+        const char *compact_template =
+            "{{bot_name}} {{station_name}}({{station_grid}}) 每日简报\n"
+            "{{section_hamqsl}}\n{{section_meteor}}\n{{section_sources}}";
+        if (load_setting_text(app->db, "report_template_full", template_value, sizeof(template_value)) == SQLITE_OK &&
+            strcmp(template_value, legacy_template) == 0) {
+            set_setting(app->db, "report_template_full", compact_template);
+            set_setting(app->db, "include_source_urls", "0");
+        }
+
+        if (load_setting_text(app->db, "compact_template_hamqsl", template_value, sizeof(template_value)) != SQLITE_OK) {
+            set_setting(app->db, "compact_template_hamqsl",
+                "更新时间：{{updated}}\n"
+                "K 指数：{{kindex}}（地磁：{{geomagfield}}）\n"
+                "HF 白天：{{hf_day}}\n"
+                "HF 夜间：{{hf_night}}");
+        }
+        if (load_setting_text(app->db, "compact_template_meteor", template_value, sizeof(template_value)) != SQLITE_OK) {
+            set_setting(app->db, "compact_template_meteor",
+                "流星雨倒计时：{{meteor_name_cn}}\n"
+                "峰值日期：{{peak_date_cn}}\n"
+                "倒计时：{{countdown_text}}");
+        }
+        if (load_setting_text(app->db, "compact_template_hamqsl_image", template_value, sizeof(template_value)) != SQLITE_OK) {
+            set_setting(app->db, "compact_template_hamqsl_image",
+                "HAMqsl 日图：[CQ:image,file={{hamqsl_widget_url}}]");
+        }
+    }
     return 0;
 }
 
@@ -334,11 +394,18 @@ int storage_load_settings(app_t *app, settings_t *out) {
     load_text_or_default(app->db, "report_template_geomag", out->report_template_geomag, sizeof(out->report_template_geomag), "{{section_solar}}");
     load_text_or_default(app->db, "report_template_open6m", out->report_template_open6m, sizeof(out->report_template_open6m), "{{section_6m}}");
     load_text_or_default(app->db, "help_template", out->help_template, sizeof(out->help_template), "帮助");
+    load_text_or_default(app->db, "compact_template_hamqsl", out->compact_template_hamqsl, sizeof(out->compact_template_hamqsl),
+        "更新时间：{{updated}}\nK 指数：{{kindex}}（地磁：{{geomagfield}}）\nHF 白天：{{hf_day}}\nHF 夜间：{{hf_night}}");
+    load_text_or_default(app->db, "compact_template_meteor", out->compact_template_meteor, sizeof(out->compact_template_meteor),
+        "流星雨倒计时：{{meteor_name_cn}}\n峰值日期：{{peak_date_cn}}\n倒计时：{{countdown_text}}");
+    load_text_or_default(app->db, "compact_template_hamqsl_image", out->compact_template_hamqsl_image, sizeof(out->compact_template_hamqsl_image),
+        "HAMqsl 日图：[CQ:image,file={{hamqsl_widget_url}}]");
 
     load_text_or_default(app->db, "trigger_full", out->trigger_full, sizeof(out->trigger_full), "传播");
     load_text_or_default(app->db, "trigger_6m", out->trigger_6m, sizeof(out->trigger_6m), "6m,6米");
     load_text_or_default(app->db, "trigger_solar", out->trigger_solar, sizeof(out->trigger_solar), "太阳");
     load_text_or_default(app->db, "trigger_help", out->trigger_help, sizeof(out->trigger_help), "帮助");
+    load_text_or_default(app->db, "trigger_pskmap", out->trigger_pskmap, sizeof(out->trigger_pskmap), "PSK图,pskreporter");
 
     pthread_mutex_unlock(&app->db_mutex);
 
