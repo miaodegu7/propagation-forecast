@@ -798,6 +798,10 @@ int psk_send_snapshot_image(app_t *app, target_type_t type, const char *target_i
     sb_t html;
     sb_t message;
     char *base64 = NULL;
+    char local_spots_15m_text[32];
+    char local_spots_60m_text[32];
+    char psk_window_text[32];
+    char page_url[MAX_LARGE_TEXT];
     int rc = -1;
 
     if (!app || !target_id || !*target_id) {
@@ -810,7 +814,233 @@ int psk_send_snapshot_image(app_t *app, target_type_t type, const char *target_i
     snapshot = app->snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
 
+    snprintf(local_spots_15m_text, sizeof(local_spots_15m_text), "%d", snapshot.psk.local_spots_15m);
+    snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot.psk.local_spots_60m);
+    snprintf(psk_window_text, sizeof(psk_window_text), "%d", settings.psk_window_minutes);
+    copy_string(page_url, sizeof(page_url), "https://pskreporter.info/pskmap.html");
+
     spot_count = collect_recent_map_spots(app, &settings, spots, (int)(sizeof(spots) / sizeof(spots[0])), &station_lat, &station_lon);
+
+    {
+        char global_spots_15m_text[32];
+        char global_spots_60m_text[32];
+        char longest_path_text[32];
+        char best_snr_text[32];
+        char psk_score_text[32];
+        char pskmap_spot_count_text[32];
+        char sixm_alert_level_num_text[32];
+        const char *assessment = snapshot.psk.assessment[0] ? snapshot.psk.assessment : "等待数据";
+        const char *confidence = snapshot.psk.confidence[0] ? snapshot.psk.confidence : "未知";
+        const char *latest_pair = snapshot.psk.latest_pair[0] ? snapshot.psk.latest_pair : "暂无";
+        const char *matched_grids = snapshot.psk.matched_grids[0] ? snapshot.psk.matched_grids : "暂无";
+        const char *farthest_peer = snapshot.psk.farthest_peer[0] ? snapshot.psk.farthest_peer : "暂无";
+        const char *farthest_grid = snapshot.psk.farthest_grid[0] ? snapshot.psk.farthest_grid : "暂无";
+        const char *assessment_code = "unknown";
+        const char *confidence_code = "unknown";
+        const char *alert_label = "静默";
+        const char *alert_code = "quiet";
+        char *rendered_message = NULL;
+        char *dynamic_image_cq = NULL;
+
+        snprintf(global_spots_15m_text, sizeof(global_spots_15m_text), "%d", snapshot.psk.global_spots_15m);
+        snprintf(global_spots_60m_text, sizeof(global_spots_60m_text), "%d", snapshot.psk.global_spots_60m);
+        snprintf(longest_path_text, sizeof(longest_path_text), "%d", snapshot.psk.longest_path_km);
+        snprintf(best_snr_text, sizeof(best_snr_text), "%d", snapshot.psk.best_snr);
+        snprintf(psk_score_text, sizeof(psk_score_text), "%d", snapshot.psk.score);
+        snprintf(pskmap_spot_count_text, sizeof(pskmap_spot_count_text), "%d", spot_count);
+
+        if (strstr(assessment, "明显") || strstr(assessment, "开口") || strstr(assessment, "活跃")) {
+            assessment_code = "open";
+        } else if (strstr(assessment, "中") || strstr(assessment, "关注") || strstr(assessment, "可守")) {
+            assessment_code = "watch";
+        } else if (strstr(assessment, "低") || strstr(assessment, "弱")) {
+            assessment_code = "weak";
+        }
+
+        if (strstr(confidence, "高")) {
+            confidence_code = "high";
+        } else if (strstr(confidence, "中")) {
+            confidence_code = "medium";
+        } else if (strstr(confidence, "低")) {
+            confidence_code = "low";
+        }
+
+        if (snapshot.psk.local_spots_15m >= settings.sixm_psk_trigger_spots) {
+            alert_label = "强提醒";
+            alert_code = "strong";
+            copy_string(sixm_alert_level_num_text, sizeof(sixm_alert_level_num_text), "3");
+        } else if (snapshot.psk.local_spots_60m > 0) {
+            alert_label = "关注";
+            alert_code = "watch";
+            copy_string(sixm_alert_level_num_text, sizeof(sixm_alert_level_num_text), "2");
+        } else if (snapshot.tropo.score >= 65 || snapshot.weather.sixm_weather_score >= 60) {
+            alert_label = "提示";
+            alert_code = "info";
+            copy_string(sixm_alert_level_num_text, sizeof(sixm_alert_level_num_text), "1");
+        } else {
+            copy_string(sixm_alert_level_num_text, sizeof(sixm_alert_level_num_text), "0");
+        }
+
+        sb_init(&html);
+        render_psk_snapshot_html(&html, &settings, &snapshot, spots, spot_count, station_lat, station_lon);
+        detail[0] = '\0';
+        if (app_capture_html_to_png(html.data ? html.data : "", "psk-snapshot", &png_data, &png_size, detail, sizeof(detail)) != 0 ||
+            !png_data || png_size == 0) {
+            const char *template_text = (settings.report_template_pskmap_failed[0] ? settings.report_template_pskmap_failed :
+                "PSKReporter 6m 快照暂时生成失败：{{pskmap_error_detail}}\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}\n最新：{{psk_latest_pair}}\n网页参考：{{pskmap_page_url}}");
+            const char *error_detail = detail[0] ? detail : "未知错误";
+            size_t render_cap = strlen(template_text) + strlen(error_detail) + strlen(page_url) + 4096;
+            template_token_t tokens[] = {
+                {"bot_name", settings.bot_name[0] ? settings.bot_name : APP_NAME},
+                {"station_name", settings.station_name[0] ? settings.station_name : "-"},
+                {"station_grid", settings.station_grid[0] ? settings.station_grid : "-"},
+                {"psk_local_spots_15m", local_spots_15m_text},
+                {"psk_local_spots_60m", local_spots_60m_text},
+                {"psk_global_spots_15m", global_spots_15m_text},
+                {"psk_global_spots_60m", global_spots_60m_text},
+                {"psk_window_minutes", psk_window_text},
+                {"psk_assessment", assessment},
+                {"psk_assessment_code", assessment_code},
+                {"psk_confidence", confidence},
+                {"psk_confidence_code", confidence_code},
+                {"psk_score", psk_score_text},
+                {"psk_latest_pair", latest_pair},
+                {"psk_latest_local_time", snapshot.psk.latest_local_time},
+                {"psk_matched_grids", matched_grids},
+                {"psk_farthest_peer", farthest_peer},
+                {"psk_farthest_grid", farthest_grid},
+                {"psk_longest_path_km", longest_path_text},
+                {"psk_best_snr", best_snr_text},
+                {"sixm_alert_level", alert_label},
+                {"sixm_alert_level_num", sixm_alert_level_num_text},
+                {"sixm_alert_code", alert_code},
+                {"pskmap_spot_count", pskmap_spot_count_text},
+                {"pskmap_error_detail", error_detail},
+                {"pskmap_page_url", page_url},
+                {"pskmap_image_cq", ""}
+            };
+
+            rendered_message = (char *)calloc(1, render_cap);
+            if (rendered_message) {
+                app_render_template(rendered_message, render_cap, template_text, tokens, sizeof(tokens) / sizeof(tokens[0]));
+            }
+            rc = onebot_send_message(app, type, target_id,
+                rendered_message && rendered_message[0] ? rendered_message : "PSK 快照生成失败");
+            app_log(app, rc == 0 ? "WARN" : "ERROR", "PSKReporter 快照图生成失败: target=%s detail=%s", target_id, error_detail);
+            free(rendered_message);
+            sb_free(&html);
+            free(png_data);
+            return rc;
+        }
+
+        base64 = base64_encode_alloc(png_data, png_size);
+        free(png_data);
+        png_data = NULL;
+        sb_free(&html);
+        if (!base64) {
+            const char *template_text = (settings.report_template_pskmap_failed[0] ? settings.report_template_pskmap_failed :
+                "PSKReporter 6m 快照暂时生成失败：{{pskmap_error_detail}}\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}\n最新：{{psk_latest_pair}}\n网页参考：{{pskmap_page_url}}");
+            const char *error_detail = "图片编码失败";
+            size_t render_cap = strlen(template_text) + strlen(error_detail) + strlen(page_url) + 4096;
+            template_token_t tokens[] = {
+                {"bot_name", settings.bot_name[0] ? settings.bot_name : APP_NAME},
+                {"station_name", settings.station_name[0] ? settings.station_name : "-"},
+                {"station_grid", settings.station_grid[0] ? settings.station_grid : "-"},
+                {"psk_local_spots_15m", local_spots_15m_text},
+                {"psk_local_spots_60m", local_spots_60m_text},
+                {"psk_global_spots_15m", global_spots_15m_text},
+                {"psk_global_spots_60m", global_spots_60m_text},
+                {"psk_window_minutes", psk_window_text},
+                {"psk_assessment", assessment},
+                {"psk_assessment_code", assessment_code},
+                {"psk_confidence", confidence},
+                {"psk_confidence_code", confidence_code},
+                {"psk_score", psk_score_text},
+                {"psk_latest_pair", latest_pair},
+                {"psk_latest_local_time", snapshot.psk.latest_local_time},
+                {"psk_matched_grids", matched_grids},
+                {"psk_farthest_peer", farthest_peer},
+                {"psk_farthest_grid", farthest_grid},
+                {"psk_longest_path_km", longest_path_text},
+                {"psk_best_snr", best_snr_text},
+                {"sixm_alert_level", alert_label},
+                {"sixm_alert_level_num", sixm_alert_level_num_text},
+                {"sixm_alert_code", alert_code},
+                {"pskmap_spot_count", pskmap_spot_count_text},
+                {"pskmap_error_detail", error_detail},
+                {"pskmap_page_url", page_url},
+                {"pskmap_image_cq", ""}
+            };
+
+            rendered_message = (char *)calloc(1, render_cap);
+            if (rendered_message) {
+                app_render_template(rendered_message, render_cap, template_text, tokens, sizeof(tokens) / sizeof(tokens[0]));
+            }
+            rc = onebot_send_message(app, type, target_id,
+                rendered_message && rendered_message[0] ? rendered_message : "PSK 快照生成失败");
+            app_log(app, rc == 0 ? "WARN" : "ERROR", "PSKReporter 快照图 base64 编码失败: target=%s", target_id);
+            free(rendered_message);
+            return rc;
+        }
+
+        {
+            const char *template_text = (settings.report_template_pskmap[0] ? settings.report_template_pskmap :
+                "PSKReporter 6m 快照\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}，判断：{{psk_assessment}}\n最新：{{psk_latest_pair}}\n{{pskmap_image_cq}}");
+            size_t image_cq_cap = strlen(base64) + 32;
+            size_t render_cap;
+            template_token_t tokens[] = {
+                {"bot_name", settings.bot_name[0] ? settings.bot_name : APP_NAME},
+                {"station_name", settings.station_name[0] ? settings.station_name : "-"},
+                {"station_grid", settings.station_grid[0] ? settings.station_grid : "-"},
+                {"psk_local_spots_15m", local_spots_15m_text},
+                {"psk_local_spots_60m", local_spots_60m_text},
+                {"psk_global_spots_15m", global_spots_15m_text},
+                {"psk_global_spots_60m", global_spots_60m_text},
+                {"psk_window_minutes", psk_window_text},
+                {"psk_assessment", assessment},
+                {"psk_assessment_code", assessment_code},
+                {"psk_confidence", confidence},
+                {"psk_confidence_code", confidence_code},
+                {"psk_score", psk_score_text},
+                {"psk_latest_pair", latest_pair},
+                {"psk_latest_local_time", snapshot.psk.latest_local_time},
+                {"psk_matched_grids", matched_grids},
+                {"psk_farthest_peer", farthest_peer},
+                {"psk_farthest_grid", farthest_grid},
+                {"psk_longest_path_km", longest_path_text},
+                {"psk_best_snr", best_snr_text},
+                {"sixm_alert_level", alert_label},
+                {"sixm_alert_level_num", sixm_alert_level_num_text},
+                {"sixm_alert_code", alert_code},
+                {"pskmap_spot_count", pskmap_spot_count_text},
+                {"pskmap_error_detail", ""},
+                {"pskmap_page_url", page_url},
+                {"pskmap_image_cq", ""}
+            };
+
+            dynamic_image_cq = (char *)calloc(1, image_cq_cap);
+            if (dynamic_image_cq) {
+                snprintf(dynamic_image_cq, image_cq_cap, "[CQ:image,file=base64://%s]", base64);
+                tokens[sizeof(tokens) / sizeof(tokens[0]) - 1].value = dynamic_image_cq;
+            }
+
+            render_cap = strlen(template_text) + (dynamic_image_cq ? strlen(dynamic_image_cq) : 0) + strlen(page_url) + 4096;
+            rendered_message = (char *)calloc(1, render_cap);
+            if (rendered_message) {
+                app_render_template(rendered_message, render_cap, template_text, tokens, sizeof(tokens) / sizeof(tokens[0]));
+            }
+        }
+
+        rc = onebot_send_message(app, type, target_id,
+            rendered_message && rendered_message[0] ? rendered_message : "PSK 快照");
+        app_log(app, rc == 0 ? "INFO" : "ERROR", "PSKReporter 快照图发送%s: target=%s spots=%d",
+            rc == 0 ? "成功" : "失败", target_id, spot_count);
+
+        free(rendered_message);
+        free(dynamic_image_cq);
+        free(base64);
+        return rc;
+    }
 
     sb_init(&html);
     render_psk_snapshot_html(&html, &settings, &snapshot, spots, spot_count, station_lat, station_lon);

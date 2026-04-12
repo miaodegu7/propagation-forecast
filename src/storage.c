@@ -180,6 +180,28 @@ static int seed_defaults(sqlite3 *db) {
         }
     }
 
+    upsert_default(db, "compact_template_hamqsl_unavailable", "HAMqsl 数据暂不可用。");
+    upsert_default(db, "section_template_weather",
+        "当地天气：{{temperature_c}}°C，湿度 {{humidity}}%，露点 {{dewpoint_c}}°C，气压 {{pressure_hpa}} hPa，云量 {{cloud_cover}}%，能见度 {{visibility_m}} m，风速 {{wind_kmh}} km/h。\n日照：日出 {{sunrise}}，日落 {{sunset}}，日照 {{daylight_hours}} 小时，最高 {{tmax_c}}°C，最低 {{tmin_c}}°C。\n6m 气象辅助：{{weather_level}}，分值 {{weather_score}}/100（CAPE {{cape}}，Lifted Index {{lifted_index}}，降水概率 {{daily_precip_probability}}%）。");
+    upsert_default(db, "section_template_weather_unavailable", "天气辅助数据暂不可用。");
+    upsert_default(db, "section_template_tropo",
+        "F5LEN 亚洲图 {{tropo_hours}} 小时预报：类别 {{tropo_category}}，分值 {{tropo_score}}/100，像素 RGB({{tropo_sample_r}},{{tropo_sample_g}},{{tropo_sample_b}})。\n{{tropo_summary}}\n{{tropo_image_cq}}");
+    upsert_default(db, "section_template_tropo_unavailable", "F5LEN 传播图暂不可用。");
+    upsert_default(db, "section_template_solar",
+        "太阳通量 {{ham_solarflux}}，A={{ham_aindex}}，K={{ham_kindex}}，地磁 {{ham_geomagfield}}，X-Ray {{ham_xray}}，黑子 {{ham_sunspots}}，MUF {{ham_muf}}。\n当前地磁暴等级 G{{geomag_g}}，太阳风 {{ham_solarwind}} km/s，磁场 {{ham_magneticfield}} nT，极光指数 {{ham_aurora}}，噪声 {{ham_signalnoise}}。");
+    upsert_default(db, "section_template_solar_unavailable", "太阳与地磁状态暂不可用。");
+    upsert_default(db, "compact_template_meteor_unavailable", "流星雨倒计时暂不可用。");
+    upsert_default(db, "section_template_satellite", "{{satellite_summary}}");
+    upsert_default(db, "section_template_satellite_unavailable", "卫星星历暂不可用。");
+    upsert_default(db, "section_template_6m",
+        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+    upsert_default(db, "section_template_analysis",
+        "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
+    upsert_default(db, "report_template_pskmap",
+        "PSKReporter 6m 快照\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}，判断：{{psk_assessment}}\n最新：{{psk_latest_pair}}\n{{pskmap_image_cq}}");
+    upsert_default(db, "report_template_pskmap_failed",
+        "PSKReporter 6m 快照暂时生成失败：{{pskmap_error_detail}}\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}\n最新：{{psk_latest_pair}}\n网页参考：{{pskmap_page_url}}");
+
     exec_sql(db,
         "INSERT OR IGNORE INTO schedule_rules(id, label, report_kind, hhmm, enabled, last_fire_date) "
         "VALUES(1, '早报', 'full', '08:30', 1, '');"
@@ -406,6 +428,35 @@ int storage_load_settings(app_t *app, settings_t *out) {
     load_text_or_default(app->db, "trigger_solar", out->trigger_solar, sizeof(out->trigger_solar), "太阳");
     load_text_or_default(app->db, "trigger_help", out->trigger_help, sizeof(out->trigger_help), "帮助");
     load_text_or_default(app->db, "trigger_pskmap", out->trigger_pskmap, sizeof(out->trigger_pskmap), "PSK图,pskreporter");
+
+    load_text_or_default(app->db, "compact_template_hamqsl_unavailable", out->compact_template_hamqsl_unavailable, sizeof(out->compact_template_hamqsl_unavailable),
+        "HAMqsl 数据暂不可用。");
+    load_text_or_default(app->db, "section_template_weather", out->section_template_weather, sizeof(out->section_template_weather),
+        "当地天气：{{temperature_c}}°C，湿度 {{humidity}}%，露点 {{dewpoint_c}}°C，气压 {{pressure_hpa}} hPa，云量 {{cloud_cover}}%，能见度 {{visibility_m}} m，风速 {{wind_kmh}} km/h。\n日照：日出 {{sunrise}}，日落 {{sunset}}，日照 {{daylight_hours}} 小时，最高 {{tmax_c}}°C，最低 {{tmin_c}}°C。\n6m 气象辅助：{{weather_level}}，分值 {{weather_score}}/100（CAPE {{cape}}，Lifted Index {{lifted_index}}，降水概率 {{daily_precip_probability}}%）。");
+    load_text_or_default(app->db, "section_template_weather_unavailable", out->section_template_weather_unavailable, sizeof(out->section_template_weather_unavailable),
+        "天气辅助数据暂不可用。");
+    load_text_or_default(app->db, "section_template_tropo", out->section_template_tropo, sizeof(out->section_template_tropo),
+        "F5LEN 亚洲图 {{tropo_hours}} 小时预报：类别 {{tropo_category}}，分值 {{tropo_score}}/100，像素 RGB({{tropo_sample_r}},{{tropo_sample_g}},{{tropo_sample_b}})。\n{{tropo_summary}}\n{{tropo_image_cq}}");
+    load_text_or_default(app->db, "section_template_tropo_unavailable", out->section_template_tropo_unavailable, sizeof(out->section_template_tropo_unavailable),
+        "F5LEN 传播图暂不可用。");
+    load_text_or_default(app->db, "section_template_solar", out->section_template_solar, sizeof(out->section_template_solar),
+        "太阳通量 {{ham_solarflux}}，A={{ham_aindex}}，K={{ham_kindex}}，地磁 {{ham_geomagfield}}，X-Ray {{ham_xray}}，黑子 {{ham_sunspots}}，MUF {{ham_muf}}。\n当前地磁暴等级 G{{geomag_g}}，太阳风 {{ham_solarwind}} km/s，磁场 {{ham_magneticfield}} nT，极光指数 {{ham_aurora}}，噪声 {{ham_signalnoise}}。");
+    load_text_or_default(app->db, "section_template_solar_unavailable", out->section_template_solar_unavailable, sizeof(out->section_template_solar_unavailable),
+        "太阳与地磁状态暂不可用。");
+    load_text_or_default(app->db, "compact_template_meteor_unavailable", out->compact_template_meteor_unavailable, sizeof(out->compact_template_meteor_unavailable),
+        "流星雨倒计时暂不可用。");
+    load_text_or_default(app->db, "section_template_satellite", out->section_template_satellite, sizeof(out->section_template_satellite),
+        "{{satellite_summary}}");
+    load_text_or_default(app->db, "section_template_satellite_unavailable", out->section_template_satellite_unavailable, sizeof(out->section_template_satellite_unavailable),
+        "卫星星历暂不可用。");
+    load_text_or_default(app->db, "section_template_6m", out->section_template_6m, sizeof(out->section_template_6m),
+        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+    load_text_or_default(app->db, "section_template_analysis", out->section_template_analysis, sizeof(out->section_template_analysis),
+        "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
+    load_text_or_default(app->db, "report_template_pskmap", out->report_template_pskmap, sizeof(out->report_template_pskmap),
+        "PSKReporter 6m 快照\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}，判断：{{psk_assessment}}\n最新：{{psk_latest_pair}}\n{{pskmap_image_cq}}");
+    load_text_or_default(app->db, "report_template_pskmap_failed", out->report_template_pskmap_failed, sizeof(out->report_template_pskmap_failed),
+        "PSKReporter 6m 快照暂时生成失败：{{pskmap_error_detail}}\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}\n最新：{{psk_latest_pair}}\n网页参考：{{pskmap_page_url}}");
 
     pthread_mutex_unlock(&app->db_mutex);
 

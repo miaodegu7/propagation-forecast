@@ -488,7 +488,15 @@ static void save_settings_from_form(app_t *app, const char *body) {
         "hamqsl_widget_url", "hamqsl_selected_fields", "include_source_urls", "include_hamqsl_widget",
         "report_template_full", "report_template_6m", "report_template_solar",
         "report_template_geomag", "report_template_open6m", "help_template",
-        "compact_template_hamqsl", "compact_template_meteor", "compact_template_hamqsl_image",
+        "compact_template_hamqsl", "compact_template_hamqsl_unavailable",
+        "section_template_weather", "section_template_weather_unavailable",
+        "section_template_tropo", "section_template_tropo_unavailable",
+        "section_template_solar", "section_template_solar_unavailable",
+        "compact_template_meteor", "compact_template_meteor_unavailable",
+        "section_template_satellite", "section_template_satellite_unavailable",
+        "section_template_6m", "section_template_analysis",
+        "compact_template_hamqsl_image",
+        "report_template_pskmap", "report_template_pskmap_failed",
         "trigger_full", "trigger_6m", "trigger_solar", "trigger_help", "trigger_pskmap"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -737,6 +745,21 @@ static char *render_dashboard(app_t *app) {
     append_textarea(&page, "compact_template_hamqsl", "HAMqsl 精简段模板", settings.compact_template_hamqsl, 5);
     append_textarea(&page, "compact_template_meteor", "流星雨精简段模板", settings.compact_template_meteor, 5);
     append_textarea(&page, "compact_template_hamqsl_image", "HAMqsl 日图段模板", settings.compact_template_hamqsl_image, 3);
+    append_textarea(&page, "report_template_pskmap", "PSK 快照模板", settings.report_template_pskmap, 5);
+    append_textarea(&page, "report_template_pskmap_failed", "PSK 快照失败模板", settings.report_template_pskmap_failed, 5);
+    append_textarea(&page, "compact_template_hamqsl_unavailable", "HAMqsl 不可用模板", settings.compact_template_hamqsl_unavailable, 3);
+    append_textarea(&page, "section_template_weather", "天气分段模板", settings.section_template_weather, 6);
+    append_textarea(&page, "section_template_weather_unavailable", "天气不可用模板", settings.section_template_weather_unavailable, 3);
+    append_textarea(&page, "section_template_tropo", "Tropo 分段模板", settings.section_template_tropo, 5);
+    append_textarea(&page, "section_template_tropo_unavailable", "Tropo 不可用模板", settings.section_template_tropo_unavailable, 3);
+    append_textarea(&page, "section_template_solar", "太阳分段模板", settings.section_template_solar, 5);
+    append_textarea(&page, "section_template_solar_unavailable", "太阳不可用模板", settings.section_template_solar_unavailable, 3);
+    append_textarea(&page, "compact_template_meteor_unavailable", "流星雨不可用模板", settings.compact_template_meteor_unavailable, 3);
+    append_textarea(&page, "section_template_satellite", "卫星分段模板", settings.section_template_satellite, 5);
+    append_textarea(&page, "section_template_satellite_unavailable", "卫星不可用模板", settings.section_template_satellite_unavailable, 3);
+    append_textarea(&page, "section_template_6m", "6m 分段模板", settings.section_template_6m, 6);
+    append_textarea(&page, "section_template_analysis", "综合分析模板", settings.section_template_analysis, 4);
+    append_textarea(&page, "compact_template_hamqsl_image", "来源 / 图片分段模板", settings.compact_template_hamqsl_image, 4);
     sb_append(&page, "<div class=\"three\">");
     append_input(&page, "trigger_full", "完整简报问词", settings.trigger_full, "text");
     append_input(&page, "trigger_6m", "6m 问词", settings.trigger_6m, "text");

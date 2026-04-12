@@ -11,11 +11,6 @@ typedef struct {
 } tropo_image_t;
 
 typedef struct {
-    const char *name;
-    const char *value;
-} template_token_t;
-
-typedef struct {
     int r;
     int g;
     int b;
@@ -29,6 +24,9 @@ typedef struct {
     int moon_percent;
     int days_left;
 } meteor_candidate_t;
+
+static int render_template(char *out, size_t out_len, const char *tmpl,
+                           const template_token_t *tokens, size_t token_count);
 
 static int extract_tag_text(const char *xml, const char *tag, char *out, size_t out_len) {
     char open_tag[64];
@@ -717,39 +715,61 @@ static const char *sixm_alert_label_from_snapshot(const snapshot_t *snapshot, co
     return "暂无提醒";
 }
 
-static int render_template(char *out, size_t out_len, const char *tmpl,
-                           const template_token_t *tokens, size_t token_count) {
-    sb_t sb;
-    sb_init(&sb);
-    const char *p = tmpl ? tmpl : "";
-    while (*p) {
-        if (p[0] == '{' && p[1] == '{') {
-            const char *end = strstr(p + 2, "}}");
-            if (end) {
-                char name[128];
-                size_t len = (size_t)(end - (p + 2));
-                if (len >= sizeof(name)) len = sizeof(name) - 1;
-                memcpy(name, p + 2, len);
-                name[len] = '\0';
-                trim_whitespace(name);
-                const char *value = "";
-                for (size_t i = 0; i < token_count; ++i) {
-                    if (strcmp(tokens[i].name, name) == 0) {
-                        value = tokens[i].value ? tokens[i].value : "";
-                        break;
-                    }
-                }
-                sb_append(&sb, value);
-                p = end + 2;
-                continue;
-            }
-        }
-        char ch[2] = {*p++, '\0'};
-        sb_append(&sb, ch);
-    }
-    copy_string(out, out_len, sb.data ? sb.data : "");
-    sb_free(&sb);
-    return 0;
+static const char *template_or_default(const char *tmpl, const char *fallback) {
+    return (tmpl && *tmpl) ? tmpl : fallback;
+}
+
+static const char *psk_assessment_code_from_text(const char *text) {
+    if (!text || !*text) return "unknown";
+    if (string_contains_ci(text, "明") || string_contains_ci(text, "open")) return "open";
+    if (string_contains_ci(text, "迹象") || string_contains_ci(text, "possible")) return "possible";
+    if (string_contains_ci(text, "全球")) return "global_only";
+    if (string_contains_ci(text, "未连接")) return "disconnected";
+    if (string_contains_ci(text, "暂未")) return "quiet";
+    return "custom";
+}
+
+static const char *psk_confidence_code_from_text(const char *text) {
+    if (!text || !*text) return "unknown";
+    if (strcmp(text, "高") == 0 || string_contains_ci(text, "high")) return "high";
+    if (strcmp(text, "中") == 0 || string_contains_ci(text, "medium")) return "medium";
+    if (strcmp(text, "低") == 0 || string_contains_ci(text, "low")) return "low";
+    if (strcmp(text, "未知") == 0 || string_contains_ci(text, "unknown")) return "unknown";
+    return "custom";
+}
+
+static const char *sixm_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    const char *label = sixm_alert_label_from_snapshot(snapshot, settings);
+    if (string_contains_ci(label, "强")) return "strong";
+    if (string_contains_ci(label, "重点")) return "watch";
+    if (string_contains_ci(label, "一般")) return "info";
+    return "none";
+}
+
+static const char *tropo_category_code_from_label(const char *label) {
+    if (!label || !*label) return "unknown";
+    if (string_contains_ci(label, "波导")) return "ducting";
+    if (string_contains_ci(label, "很强")) return "very_strong";
+    if (string_contains_ci(label, "较强")) return "strong";
+    if (string_contains_ci(label, "良好")) return "good";
+    if (string_contains_ci(label, "增强")) return "enhanced";
+    if (string_contains_ci(label, "受扰")) return "disturbed";
+    if (string_contains_ci(label, "普通")) return "normal";
+    return "custom";
+}
+
+static const char *meteor_countdown_code_from_days(int days_left) {
+    if (days_left > 0) return "future";
+    if (days_left == 0) return "today";
+    return "past";
+}
+
+static const char *satellite_api_status_code_from_label(const char *label) {
+    if (!label || !*label) return "unknown";
+    if (string_contains_ci(label, "正常")) return "ok";
+    if (string_contains_ci(label, "部分")) return "partial";
+    if (string_contains_ci(label, "异常")) return "error";
+    return "custom";
 }
 
 static void append_band_summary(sb_t *sb, const hamqsl_data_t *ham, const char *time_slot, const char *label) {
@@ -1533,6 +1553,460 @@ static void build_analysis_summary(const settings_t *settings, const snapshot_t 
         sixm_alert_label_from_snapshot(snapshot, settings));
 }
 
+static int render_template(char *out, size_t out_len, const char *tmpl,
+                           const template_token_t *tokens, size_t token_count) {
+    return app_render_template(out, out_len, tmpl, tokens, token_count);
+}
+
+static int sixm_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    const char *code = sixm_alert_code_from_snapshot(snapshot, settings);
+    if (strcmp(code, "strong") == 0) return 3;
+    if (strcmp(code, "watch") == 0) return 2;
+    if (strcmp(code, "info") == 0) return 1;
+    return 0;
+}
+
+static void inline_copy(char *out, size_t out_len, const char *text) {
+    sb_t sb;
+    const char *src = text ? text : "";
+    sb_init(&sb);
+    while (*src) {
+        if (*src == '\r' || *src == '\n' || *src == '\t') {
+            if (sb.len == 0 || sb.data[sb.len - 1] != ' ') {
+                sb_append(&sb, " ");
+            }
+        } else {
+            char ch[2] = {*src, '\0'};
+            sb_append(&sb, ch);
+        }
+        src++;
+    }
+    if (sb.data) {
+        trim_whitespace(sb.data);
+    }
+    copy_string(out, out_len, sb.data ? sb.data : "");
+    sb_free(&sb);
+}
+
+static void build_hamqsl_section_custom(const settings_t *settings, const hamqsl_data_t *ham, char *out, size_t out_len) {
+    char kindex_text[32] = "";
+    char solarflux_text[32] = "";
+    char aindex_text[32] = "";
+    char sunspots_text[32] = "";
+    char aurora_text[32] = "";
+    char solarwind_text[32] = "";
+    char magneticfield_text[32] = "";
+    char hf_day[512] = "";
+    char hf_night[512] = "";
+    template_token_t tokens[] = {
+        {"updated", ham->updated},
+        {"kindex", kindex_text},
+        {"ham_kindex", kindex_text},
+        {"ham_solarflux", solarflux_text},
+        {"ham_aindex", aindex_text},
+        {"ham_xray", ham->xray},
+        {"ham_sunspots", sunspots_text},
+        {"ham_muf", ham->muf},
+        {"ham_geomagfield", ham->geomagfield},
+        {"geomagfield", ham->geomagfield},
+        {"ham_signalnoise", ham->signalnoise},
+        {"ham_fof2", ham->fof2},
+        {"ham_muffactor", ham->muffactor},
+        {"ham_kindex_text", ham->kindex_text},
+        {"ham_source_name", ham->source_name},
+        {"ham_source_url", ham->source_url},
+        {"hf_day", hf_day},
+        {"hf_night", hf_night},
+        {"ham_aurora", aurora_text},
+        {"ham_solarwind", solarwind_text},
+        {"ham_magneticfield", magneticfield_text}
+    };
+
+    if (!ham->valid) {
+        app_render_template(out, out_len,
+            template_or_default(settings->compact_template_hamqsl_unavailable, "HAMqsl 数据暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        return;
+    }
+
+    snprintf(kindex_text, sizeof(kindex_text), "%d", ham->kindex);
+    snprintf(solarflux_text, sizeof(solarflux_text), "%d", ham->solarflux);
+    snprintf(aindex_text, sizeof(aindex_text), "%d", ham->aindex);
+    snprintf(sunspots_text, sizeof(sunspots_text), "%d", ham->sunspots);
+    snprintf(aurora_text, sizeof(aurora_text), "%d", ham->aurora);
+    snprintf(solarwind_text, sizeof(solarwind_text), "%.1f", ham->solarwind);
+    snprintf(magneticfield_text, sizeof(magneticfield_text), "%.1f", ham->magneticfield);
+    build_band_summary_text(ham, "day", hf_day, sizeof(hf_day));
+    build_band_summary_text(ham, "night", hf_night, sizeof(hf_night));
+
+    app_render_template(out, out_len,
+        template_or_default(settings->compact_template_hamqsl,
+            "更新时间：{{updated}}\nK 指数：{{kindex}}（地磁：{{geomagfield}}）\nHF 白天：{{hf_day}}\nHF 夜间：{{hf_night}}"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_weather_section_custom(const settings_t *settings, const weather_data_t *weather, char *out, size_t out_len) {
+    char is_day_text[8] = "";
+    char temperature_text[32] = "";
+    char humidity_text[32] = "";
+    char dewpoint_text[32] = "";
+    char pressure_text[32] = "";
+    char cloud_text[32] = "";
+    char visibility_text[32] = "";
+    char wind_text[32] = "";
+    char cape_text[32] = "";
+    char lifted_text[32] = "";
+    char precip_text[32] = "";
+    char daylight_text[32] = "";
+    char tmax_text[32] = "";
+    char tmin_text[32] = "";
+    char daily_precip_text[32] = "";
+    char weather_score_text[32] = "";
+    template_token_t tokens[] = {
+        {"weather_current_time", weather->current_time},
+        {"weather_is_day", is_day_text},
+        {"temperature_c", temperature_text},
+        {"humidity", humidity_text},
+        {"dewpoint_c", dewpoint_text},
+        {"pressure_hpa", pressure_text},
+        {"cloud_cover", cloud_text},
+        {"visibility_m", visibility_text},
+        {"wind_kmh", wind_text},
+        {"cape", cape_text},
+        {"lifted_index", lifted_text},
+        {"precipitation_probability", precip_text},
+        {"sunrise", weather->sunrise},
+        {"sunset", weather->sunset},
+        {"daylight_hours", daylight_text},
+        {"tmax_c", tmax_text},
+        {"tmin_c", tmin_text},
+        {"daily_precip_probability", daily_precip_text},
+        {"weather_level", weather->sixm_weather_level},
+        {"weather_score", weather_score_text}
+    };
+
+    if (!weather->valid) {
+        app_render_template(out, out_len,
+            template_or_default(settings->section_template_weather_unavailable, "天气辅助数据暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        return;
+    }
+
+    snprintf(is_day_text, sizeof(is_day_text), "%d", weather->is_day ? 1 : 0);
+    snprintf(temperature_text, sizeof(temperature_text), "%.1f", weather->temperature_c);
+    snprintf(humidity_text, sizeof(humidity_text), "%d", weather->humidity);
+    snprintf(dewpoint_text, sizeof(dewpoint_text), "%.1f", weather->dewpoint_c);
+    snprintf(pressure_text, sizeof(pressure_text), "%.1f", weather->pressure_hpa);
+    snprintf(cloud_text, sizeof(cloud_text), "%d", weather->cloud_cover);
+    snprintf(visibility_text, sizeof(visibility_text), "%.0f", weather->visibility_m);
+    snprintf(wind_text, sizeof(wind_text), "%.1f", weather->wind_kmh);
+    snprintf(cape_text, sizeof(cape_text), "%.0f", weather->cape);
+    snprintf(lifted_text, sizeof(lifted_text), "%.1f", weather->lifted_index);
+    snprintf(precip_text, sizeof(precip_text), "%d", weather->precipitation_probability);
+    snprintf(daylight_text, sizeof(daylight_text), "%.1f", weather->daylight_hours);
+    snprintf(tmax_text, sizeof(tmax_text), "%.1f", weather->tmax_c);
+    snprintf(tmin_text, sizeof(tmin_text), "%.1f", weather->tmin_c);
+    snprintf(daily_precip_text, sizeof(daily_precip_text), "%d", weather->daily_precip_probability);
+    snprintf(weather_score_text, sizeof(weather_score_text), "%d", weather->sixm_weather_score);
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_weather,
+            "当地天气：{{temperature_c}}°C，湿度 {{humidity}}%，露点 {{dewpoint_c}}°C，气压 {{pressure_hpa}} hPa，云量 {{cloud_cover}}%，能见度 {{visibility_m}} m，风速 {{wind_kmh}} km/h。\n日照：日出 {{sunrise}}，日落 {{sunset}}，日照 {{daylight_hours}} 小时，最高 {{tmax_c}}°C，最低 {{tmin_c}}°C。\n6m 气象辅助：{{weather_level}}，分值 {{weather_score}}/100（CAPE {{cape}}，Lifted Index {{lifted_index}}，降水概率 {{daily_precip_probability}}%）。"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_tropo_section_custom(const settings_t *settings, const tropo_data_t *tropo, char *out, size_t out_len) {
+    char horizon_text[32] = "";
+    char score_text[32] = "";
+    char sample_r_text[32] = "";
+    char sample_g_text[32] = "";
+    char sample_b_text[32] = "";
+    char image_cq[MAX_LARGE_TEXT + 32] = "";
+    char category_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"tropo_hours", horizon_text},
+        {"tropo_category", tropo->category},
+        {"tropo_category_code", category_code},
+        {"tropo_score", score_text},
+        {"tropo_sample_r", sample_r_text},
+        {"tropo_sample_g", sample_g_text},
+        {"tropo_sample_b", sample_b_text},
+        {"tropo_summary", tropo->summary},
+        {"tropo_page_url", tropo->page_url},
+        {"tropo_image_url", tropo->image_url},
+        {"tropo_image_cq", image_cq}
+    };
+
+    if (!tropo->valid) {
+        app_render_template(out, out_len,
+            template_or_default(settings->section_template_tropo_unavailable, "F5LEN 传播图暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        return;
+    }
+
+    snprintf(horizon_text, sizeof(horizon_text), "%d", tropo->horizon_hours);
+    snprintf(score_text, sizeof(score_text), "%d", tropo->score);
+    snprintf(sample_r_text, sizeof(sample_r_text), "%d", tropo->sample_r);
+    snprintf(sample_g_text, sizeof(sample_g_text), "%d", tropo->sample_g);
+    snprintf(sample_b_text, sizeof(sample_b_text), "%d", tropo->sample_b);
+    copy_string(category_code, sizeof(category_code), tropo_category_code_from_label(tropo->category));
+    if (settings->tropo_send_image && tropo->image_url[0]) {
+        snprintf(image_cq, sizeof(image_cq), "[CQ:image,file=%s]", tropo->image_url);
+    }
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_tropo,
+            "F5LEN 亚洲图 {{tropo_hours}} 小时预报：类别 {{tropo_category}}，分值 {{tropo_score}}/100，像素 RGB({{tropo_sample_r}},{{tropo_sample_g}},{{tropo_sample_b}})。\n{{tropo_summary}}\n{{tropo_image_cq}}"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_solar_section_custom(const settings_t *settings, const hamqsl_data_t *ham,
+                                       char *summary, size_t summary_len,
+                                       char *section, size_t section_len) {
+    char geomag_g_text[32] = "";
+    char solarflux_text[32] = "";
+    char aindex_text[32] = "";
+    char kindex_text[32] = "";
+    char sunspots_text[32] = "";
+    char aurora_text[32] = "";
+    char solarwind_text[32] = "";
+    char magneticfield_text[32] = "";
+    template_token_t tokens[] = {
+        {"geomag_g", geomag_g_text},
+        {"ham_solarflux", solarflux_text},
+        {"ham_aindex", aindex_text},
+        {"ham_kindex", kindex_text},
+        {"ham_geomagfield", ham->geomagfield},
+        {"ham_xray", ham->xray},
+        {"ham_sunspots", sunspots_text},
+        {"ham_muf", ham->muf},
+        {"ham_signalnoise", ham->signalnoise},
+        {"ham_aurora", aurora_text},
+        {"ham_solarwind", solarwind_text},
+        {"ham_magneticfield", magneticfield_text}
+    };
+
+    if (!ham->valid) {
+        app_render_template(section, section_len,
+            template_or_default(settings->section_template_solar_unavailable, "太阳与地磁状态暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        inline_copy(summary, summary_len, section);
+        return;
+    }
+
+    snprintf(geomag_g_text, sizeof(geomag_g_text), "%d", geomag_g_from_k(ham->kindex));
+    snprintf(solarflux_text, sizeof(solarflux_text), "%d", ham->solarflux);
+    snprintf(aindex_text, sizeof(aindex_text), "%d", ham->aindex);
+    snprintf(kindex_text, sizeof(kindex_text), "%d", ham->kindex);
+    snprintf(sunspots_text, sizeof(sunspots_text), "%d", ham->sunspots);
+    snprintf(aurora_text, sizeof(aurora_text), "%d", ham->aurora);
+    snprintf(solarwind_text, sizeof(solarwind_text), "%.1f", ham->solarwind);
+    snprintf(magneticfield_text, sizeof(magneticfield_text), "%.1f", ham->magneticfield);
+
+    app_render_template(section, section_len,
+        template_or_default(settings->section_template_solar,
+            "太阳通量 {{ham_solarflux}}，A={{ham_aindex}}，K={{ham_kindex}}，地磁 {{ham_geomagfield}}，X-Ray {{ham_xray}}，黑子 {{ham_sunspots}}，MUF {{ham_muf}}。\n当前地磁暴等级 G{{geomag_g}}，太阳风 {{ham_solarwind}} km/s，磁场 {{ham_magneticfield}} nT，极光指数 {{ham_aurora}}，噪声 {{ham_signalnoise}}。"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+    inline_copy(summary, summary_len, section);
+}
+
+static void build_meteor_section_custom(const settings_t *settings, const meteor_data_t *meteor, char *out, size_t out_len) {
+    char meteor_name_cn[MAX_TEXT] = "";
+    char peak_date_cn[MAX_TEXT] = "";
+    char days_left_text[32] = "";
+    char countdown_text[MAX_TEXT] = "";
+    char moon_percent_text[32] = "";
+    char countdown_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"meteor_name", meteor->shower_name},
+        {"meteor_name_cn", meteor_name_cn},
+        {"peak_date", meteor->peak_label},
+        {"peak_date_cn", peak_date_cn},
+        {"days_left", days_left_text},
+        {"meteor_days_left", days_left_text},
+        {"countdown_text", countdown_text},
+        {"meteor_countdown_code", countdown_code},
+        {"moon_percent", moon_percent_text},
+        {"meteor_summary", meteor->summary},
+        {"meteor_source_url", meteor->source_url}
+    };
+
+    copy_string(meteor_name_cn, sizeof(meteor_name_cn), meteor_name_to_chinese(meteor->shower_name));
+    format_peak_date_cn_text(meteor->peak_label, peak_date_cn, sizeof(peak_date_cn));
+    snprintf(days_left_text, sizeof(days_left_text), "%d", meteor->days_left);
+    format_meteor_countdown_text(meteor->days_left, countdown_text, sizeof(countdown_text));
+    snprintf(moon_percent_text, sizeof(moon_percent_text), "%d", meteor->moon_percent);
+    copy_string(countdown_code, sizeof(countdown_code), meteor_countdown_code_from_days(meteor->days_left));
+
+    if (!meteor->valid || !meteor->shower_name[0] || !meteor->peak_label[0]) {
+        app_render_template(out, out_len,
+            template_or_default(settings->compact_template_meteor_unavailable,
+                meteor->summary[0] ? meteor->summary : "流星雨倒计时暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        return;
+    }
+
+    app_render_template(out, out_len,
+        template_or_default(settings->compact_template_meteor,
+            "流星雨倒计时：{{meteor_name_cn}}\n峰值日期：{{peak_date_cn}}\n倒计时：{{countdown_text}}"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_satellite_section_custom(const settings_t *settings, const satellite_summary_t *satellite, char *out, size_t out_len) {
+    char api_configured_text[8] = "";
+    char selected_text[32] = "";
+    char api_success_text[32] = "";
+    char api_request_text[32] = "";
+    char pass_count_text[32] = "";
+    char api_status_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"satellite_api_configured", api_configured_text},
+        {"satellite_selected_count", selected_text},
+        {"satellite_api_successes", api_success_text},
+        {"satellite_api_requests", api_request_text},
+        {"satellite_pass_count", pass_count_text},
+        {"satellite_api_status", satellite->api_status},
+        {"satellite_api_status_code", api_status_code},
+        {"satellite_selected_names", satellite->selected_names},
+        {"satellite_summary", satellite->summary},
+        {"satellite_source_url", satellite->source_url}
+    };
+
+    snprintf(api_configured_text, sizeof(api_configured_text), "%d", satellite->api_configured ? 1 : 0);
+    snprintf(selected_text, sizeof(selected_text), "%d", satellite->selected_satellites);
+    snprintf(api_success_text, sizeof(api_success_text), "%d", satellite->api_successes);
+    snprintf(api_request_text, sizeof(api_request_text), "%d", satellite->api_requests);
+    snprintf(pass_count_text, sizeof(pass_count_text), "%d", satellite->pass_count);
+    copy_string(api_status_code, sizeof(api_status_code), satellite_api_status_code_from_label(satellite->api_status));
+
+    if (!satellite->valid) {
+        app_render_template(out, out_len,
+            template_or_default(settings->section_template_satellite_unavailable, "卫星星历暂不可用。"),
+            tokens, sizeof(tokens) / sizeof(tokens[0]));
+        return;
+    }
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_satellite, "{{satellite_summary}}"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_sixm_section_custom(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
+    char mqtt_connected_text[8] = "";
+    char global_spots_15m_text[32] = "";
+    char global_spots_60m_text[32] = "";
+    char local_spots_15m_text[32] = "";
+    char local_spots_60m_text[32] = "";
+    char longest_path_text[32] = "";
+    char best_snr_text[32] = "";
+    char score_text[32] = "";
+    char sixm_alert_num_text[32] = "";
+    char assessment_code[MAX_TEXT] = "";
+    char confidence_code[MAX_TEXT] = "";
+    char sixm_alert_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"psk_mqtt_connected", mqtt_connected_text},
+        {"psk_global_spots_15m", global_spots_15m_text},
+        {"psk_global_spots_60m", global_spots_60m_text},
+        {"psk_local_spots_15m", local_spots_15m_text},
+        {"psk_local_spots_60m", local_spots_60m_text},
+        {"psk_longest_path_km", longest_path_text},
+        {"psk_best_snr", best_snr_text},
+        {"psk_score", score_text},
+        {"psk_assessment", snapshot->psk.assessment},
+        {"psk_assessment_code", assessment_code},
+        {"psk_confidence", snapshot->psk.confidence},
+        {"psk_confidence_code", confidence_code},
+        {"psk_latest_pair", snapshot->psk.latest_pair},
+        {"psk_latest_local_time", snapshot->psk.latest_local_time},
+        {"psk_matched_grids", snapshot->psk.matched_grids},
+        {"psk_farthest_peer", snapshot->psk.farthest_peer},
+        {"psk_farthest_grid", snapshot->psk.farthest_grid},
+        {"sixm_alert_level", sixm_alert_label_from_snapshot(snapshot, settings)},
+        {"sixm_alert_level_num", sixm_alert_num_text},
+        {"sixm_alert_code", sixm_alert_code}
+    };
+
+    snprintf(mqtt_connected_text, sizeof(mqtt_connected_text), "%d", snapshot->psk.mqtt_connected ? 1 : 0);
+    snprintf(global_spots_15m_text, sizeof(global_spots_15m_text), "%d", snapshot->psk.global_spots_15m);
+    snprintf(global_spots_60m_text, sizeof(global_spots_60m_text), "%d", snapshot->psk.global_spots_60m);
+    snprintf(local_spots_15m_text, sizeof(local_spots_15m_text), "%d", snapshot->psk.local_spots_15m);
+    snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot->psk.local_spots_60m);
+    snprintf(longest_path_text, sizeof(longest_path_text), "%d", snapshot->psk.longest_path_km);
+    snprintf(best_snr_text, sizeof(best_snr_text), "%d", snapshot->psk.best_snr);
+    snprintf(score_text, sizeof(score_text), "%d", snapshot->psk.score);
+    snprintf(sixm_alert_num_text, sizeof(sixm_alert_num_text), "%d", sixm_alert_num_from_snapshot(snapshot, settings));
+    copy_string(assessment_code, sizeof(assessment_code), psk_assessment_code_from_text(snapshot->psk.assessment));
+    copy_string(confidence_code, sizeof(confidence_code), psk_confidence_code_from_text(snapshot->psk.confidence));
+    copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, settings));
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_6m,
+            "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_sources_section_custom(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
+    char widget_cq[MAX_LARGE_TEXT + 32] = "";
+    const char *ham_source_url = snapshot->hamqsl.source_url[0] ? snapshot->hamqsl.source_url : "https://www.hamqsl.com/solarxml.php";
+    const char *tropo_source_url = snapshot->tropo.page_url[0] ? snapshot->tropo.page_url : settings->tropo_source_url;
+    const char *meteor_source_url = snapshot->meteor.source_url[0] ? snapshot->meteor.source_url : settings->meteor_source_url;
+    const char *satellite_source_url = snapshot->satellite.source_url[0] ? snapshot->satellite.source_url : settings->satellite_source_url;
+    template_token_t tokens[] = {
+        {"hamqsl_widget_url", settings->hamqsl_widget_url},
+        {"hamqsl_widget_cq", widget_cq},
+        {"ham_source_url", ham_source_url},
+        {"tropo_source_url", tropo_source_url},
+        {"meteor_source_url", meteor_source_url},
+        {"satellite_source_url", satellite_source_url}
+    };
+
+    if (!settings->include_hamqsl_widget && !settings->include_source_urls) {
+        out[0] = '\0';
+        return;
+    }
+    if (settings->include_hamqsl_widget && settings->hamqsl_widget_url[0]) {
+        snprintf(widget_cq, sizeof(widget_cq), "[CQ:image,file=%s]", settings->hamqsl_widget_url);
+    }
+
+    app_render_template(out, out_len,
+        template_or_default(settings->compact_template_hamqsl_image,
+            "HAMqsl 日图：{{hamqsl_widget_cq}}\nHAMqsl：{{ham_source_url}}"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_analysis_summary_custom(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
+    char tropo_score_text[32] = "";
+    char weather_score_text[32] = "";
+    char local_spots_60m_text[32] = "";
+    char sixm_alert_num_text[32] = "";
+    char sixm_alert_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"sun_summary", snapshot->sun_summary},
+        {"psk_assessment", snapshot->psk.assessment},
+        {"psk_confidence", snapshot->psk.confidence},
+        {"psk_local_spots_60m", local_spots_60m_text},
+        {"tropo_category", snapshot->tropo.valid ? snapshot->tropo.category : ""},
+        {"tropo_score", tropo_score_text},
+        {"weather_level", snapshot->weather.valid ? snapshot->weather.sixm_weather_level : ""},
+        {"weather_score", weather_score_text},
+        {"sixm_alert_level", sixm_alert_label_from_snapshot(snapshot, settings)},
+        {"sixm_alert_level_num", sixm_alert_num_text},
+        {"sixm_alert_code", sixm_alert_code}
+    };
+
+    snprintf(tropo_score_text, sizeof(tropo_score_text), "%d", snapshot->tropo.score);
+    snprintf(weather_score_text, sizeof(weather_score_text), "%d", snapshot->weather.sixm_weather_score);
+    snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot->psk.local_spots_60m);
+    snprintf(sixm_alert_num_text, sizeof(sixm_alert_num_text), "%d", sixm_alert_num_from_snapshot(snapshot, settings));
+    copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, settings));
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_analysis,
+            "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
 void build_reports(app_t *app, snapshot_t *snapshot) {
     settings_t settings;
     memset(&settings, 0, sizeof(settings));
@@ -1542,16 +2016,16 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         pthread_mutex_unlock(&app->cache_mutex);
     }
 
-    build_hamqsl_section(&settings, &snapshot->hamqsl, snapshot->section_hamqsl, sizeof(snapshot->section_hamqsl));
-    build_weather_section(&snapshot->weather, snapshot->section_weather, sizeof(snapshot->section_weather));
-    build_tropo_section(&settings, &snapshot->tropo, snapshot->section_tropo, sizeof(snapshot->section_tropo));
-    build_solar_section(&snapshot->hamqsl, snapshot->sun_summary, sizeof(snapshot->sun_summary),
+    build_hamqsl_section_custom(&settings, &snapshot->hamqsl, snapshot->section_hamqsl, sizeof(snapshot->section_hamqsl));
+    build_weather_section_custom(&settings, &snapshot->weather, snapshot->section_weather, sizeof(snapshot->section_weather));
+    build_tropo_section_custom(&settings, &snapshot->tropo, snapshot->section_tropo, sizeof(snapshot->section_tropo));
+    build_solar_section_custom(&settings, &snapshot->hamqsl, snapshot->sun_summary, sizeof(snapshot->sun_summary),
         snapshot->section_solar, sizeof(snapshot->section_solar));
-    build_meteor_section(&settings, &snapshot->meteor, snapshot->section_meteor, sizeof(snapshot->section_meteor));
-    build_satellite_section(&snapshot->satellite, snapshot->section_satellite, sizeof(snapshot->section_satellite));
-    build_sixm_section(&settings, snapshot, snapshot->section_6m, sizeof(snapshot->section_6m));
-    build_sources_section(&settings, snapshot, snapshot->section_sources, sizeof(snapshot->section_sources));
-    build_analysis_summary(&settings, snapshot, snapshot->analysis_summary, sizeof(snapshot->analysis_summary));
+    build_meteor_section_custom(&settings, &snapshot->meteor, snapshot->section_meteor, sizeof(snapshot->section_meteor));
+    build_satellite_section_custom(&settings, &snapshot->satellite, snapshot->section_satellite, sizeof(snapshot->section_satellite));
+    build_sixm_section_custom(&settings, snapshot, snapshot->section_6m, sizeof(snapshot->section_6m));
+    build_sources_section_custom(&settings, snapshot, snapshot->section_sources, sizeof(snapshot->section_sources));
+    build_analysis_summary_custom(&settings, snapshot, snapshot->analysis_summary, sizeof(snapshot->analysis_summary));
 
     char refreshed[64];
     char ham_solarflux[32];
@@ -1570,6 +2044,21 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char peak_date_cn[MAX_TEXT];
     char countdown_text[MAX_TEXT];
     char moon_percent_text[32];
+    char psk_mqtt_connected[8];
+    char psk_global_spots_15m[32];
+    char psk_global_spots_60m[32];
+    char psk_local_spots_15m[32];
+    char psk_local_spots_60m[32];
+    char psk_longest_path_km[32];
+    char psk_best_snr[32];
+    char psk_score[32];
+    char sixm_alert_level_num[32];
+    char psk_assessment_code[MAX_TEXT];
+    char psk_confidence_code[MAX_TEXT];
+    char sixm_alert_code[MAX_TEXT];
+    char meteor_countdown_code[MAX_TEXT];
+    char tropo_category_code[MAX_TEXT];
+    char satellite_api_status_code[MAX_TEXT];
     format_time_local(snapshot->refreshed_at, refreshed, sizeof(refreshed));
     snprintf(ham_solarflux, sizeof(ham_solarflux), "%d", snapshot->hamqsl.solarflux);
     snprintf(ham_aindex, sizeof(ham_aindex), "%d", snapshot->hamqsl.aindex);
@@ -1588,6 +2077,21 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     format_peak_date_cn_text(snapshot->meteor.peak_label, peak_date_cn, sizeof(peak_date_cn));
     format_meteor_countdown_text(snapshot->meteor.days_left, countdown_text, sizeof(countdown_text));
     snprintf(moon_percent_text, sizeof(moon_percent_text), "%d", snapshot->meteor.moon_percent);
+    snprintf(psk_mqtt_connected, sizeof(psk_mqtt_connected), "%d", snapshot->psk.mqtt_connected ? 1 : 0);
+    snprintf(psk_global_spots_15m, sizeof(psk_global_spots_15m), "%d", snapshot->psk.global_spots_15m);
+    snprintf(psk_global_spots_60m, sizeof(psk_global_spots_60m), "%d", snapshot->psk.global_spots_60m);
+    snprintf(psk_local_spots_15m, sizeof(psk_local_spots_15m), "%d", snapshot->psk.local_spots_15m);
+    snprintf(psk_local_spots_60m, sizeof(psk_local_spots_60m), "%d", snapshot->psk.local_spots_60m);
+    snprintf(psk_longest_path_km, sizeof(psk_longest_path_km), "%d", snapshot->psk.longest_path_km);
+    snprintf(psk_best_snr, sizeof(psk_best_snr), "%d", snapshot->psk.best_snr);
+    snprintf(psk_score, sizeof(psk_score), "%d", snapshot->psk.score);
+    snprintf(sixm_alert_level_num, sizeof(sixm_alert_level_num), "%d", sixm_alert_num_from_snapshot(snapshot, &settings));
+    copy_string(psk_assessment_code, sizeof(psk_assessment_code), psk_assessment_code_from_text(snapshot->psk.assessment));
+    copy_string(psk_confidence_code, sizeof(psk_confidence_code), psk_confidence_code_from_text(snapshot->psk.confidence));
+    copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, &settings));
+    copy_string(meteor_countdown_code, sizeof(meteor_countdown_code), meteor_countdown_code_from_days(snapshot->meteor.days_left));
+    copy_string(tropo_category_code, sizeof(tropo_category_code), tropo_category_code_from_label(snapshot->tropo.category));
+    copy_string(satellite_api_status_code, sizeof(satellite_api_status_code), satellite_api_status_code_from_label(snapshot->satellite.api_status));
 
     const char *sixm_label = sixm_alert_label_from_snapshot(snapshot, &settings);
     template_token_t tokens[] = {
@@ -1620,6 +2124,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"weather_level", snapshot->weather.sixm_weather_level},
         {"weather_score", weather_score},
         {"tropo_category", snapshot->tropo.category},
+        {"tropo_category_code", tropo_category_code},
         {"tropo_score", tropo_score},
         {"meteor_name", snapshot->meteor.shower_name},
         {"meteor_name_cn", meteor_name_cn},
@@ -1629,10 +2134,39 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"meteor_days_left", meteor_days_left},
         {"days_left", meteor_days_left},
         {"countdown_text", countdown_text},
+        {"meteor_countdown_code", meteor_countdown_code},
         {"moon_percent", moon_percent_text},
         {"hamqsl_widget_url", settings.hamqsl_widget_url},
         {"geomag_g", ham_geomag_g},
-        {"sixm_alert_level", sixm_label}
+        {"sixm_alert_level", sixm_label},
+        {"sixm_alert_level_num", sixm_alert_level_num},
+        {"sixm_alert_code", sixm_alert_code},
+        {"psk_mqtt_connected", psk_mqtt_connected},
+        {"psk_global_spots_15m", psk_global_spots_15m},
+        {"psk_global_spots_60m", psk_global_spots_60m},
+        {"psk_local_spots_15m", psk_local_spots_15m},
+        {"psk_local_spots_60m", psk_local_spots_60m},
+        {"psk_longest_path_km", psk_longest_path_km},
+        {"psk_best_snr", psk_best_snr},
+        {"psk_score", psk_score},
+        {"psk_assessment", snapshot->psk.assessment},
+        {"psk_assessment_code", psk_assessment_code},
+        {"psk_confidence", snapshot->psk.confidence},
+        {"psk_confidence_code", psk_confidence_code},
+        {"psk_latest_pair", snapshot->psk.latest_pair},
+        {"psk_latest_local_time", snapshot->psk.latest_local_time},
+        {"psk_matched_grids", snapshot->psk.matched_grids},
+        {"psk_farthest_peer", snapshot->psk.farthest_peer},
+        {"psk_farthest_grid", snapshot->psk.farthest_grid},
+        {"ham_source_url", snapshot->hamqsl.source_url},
+        {"tropo_page_url", snapshot->tropo.page_url},
+        {"tropo_image_url", snapshot->tropo.image_url},
+        {"meteor_source_url", snapshot->meteor.source_url},
+        {"satellite_api_status", snapshot->satellite.api_status},
+        {"satellite_api_status_code", satellite_api_status_code},
+        {"satellite_selected_names", snapshot->satellite.selected_names},
+        {"satellite_summary", snapshot->satellite.summary},
+        {"satellite_source_url", snapshot->satellite.source_url}
     };
     size_t token_count = sizeof(tokens) / sizeof(tokens[0]);
 

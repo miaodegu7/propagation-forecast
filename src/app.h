@@ -77,6 +77,11 @@ typedef int app_socket_t;
 #define MAX_RATE_LIMITS 256
 #define MAX_TEMPLATE_NAME 64
 
+typedef struct {
+    const char *name;
+    const char *value;
+} template_token_t;
+
 /* 简单字符串构建器。
  * 后台页面 HTML、JSON 请求体和日志片段都会用它来逐步拼接。 */
 typedef struct {
@@ -209,8 +214,22 @@ typedef struct {
     char report_template_open6m[MAX_TEMPLATE_TEXT];
     char help_template[MAX_TEMPLATE_TEXT];
     char compact_template_hamqsl[MAX_TEMPLATE_TEXT];
+    char compact_template_hamqsl_unavailable[MAX_TEMPLATE_TEXT];
+    char section_template_weather[MAX_TEMPLATE_TEXT];
+    char section_template_weather_unavailable[MAX_TEMPLATE_TEXT];
+    char section_template_tropo[MAX_TEMPLATE_TEXT];
+    char section_template_tropo_unavailable[MAX_TEMPLATE_TEXT];
+    char section_template_solar[MAX_TEMPLATE_TEXT];
+    char section_template_solar_unavailable[MAX_TEMPLATE_TEXT];
     char compact_template_meteor[MAX_TEMPLATE_TEXT];
+    char compact_template_meteor_unavailable[MAX_TEMPLATE_TEXT];
+    char section_template_satellite[MAX_TEMPLATE_TEXT];
+    char section_template_satellite_unavailable[MAX_TEMPLATE_TEXT];
+    char section_template_6m[MAX_TEMPLATE_TEXT];
+    char section_template_analysis[MAX_TEMPLATE_TEXT];
     char compact_template_hamqsl_image[MAX_TEMPLATE_TEXT];
+    char report_template_pskmap[MAX_TEMPLATE_TEXT];
+    char report_template_pskmap_failed[MAX_TEMPLATE_TEXT];
 
     char trigger_full[MAX_HUGE_TEXT];
     char trigger_6m[MAX_HUGE_TEXT];
@@ -524,6 +543,7 @@ void app_write_boot_log(const char *fmt, ...);
 void app_set_last_error(app_t *app, const char *fmt, ...);
 void app_show_startup_error(const char *title, const char *message);
 int app_capture_html_to_png(const char *html_utf8, const char *stem, unsigned char **png_data, size_t *png_size, char *detail, size_t detail_len);
+int app_render_template(char *out, size_t out_len, const char *tmpl, const template_token_t *tokens, size_t token_count);
 #ifdef _WIN32
 int app_windows_path_to_utf16(const char *path, wchar_t *out, size_t out_len);
 #endif

@@ -47,31 +47,21 @@ static int get_exe_path_utf16(wchar_t *out, size_t out_len) {
     return 0;
 }
 
-static int build_exe_sidecar_path_utf16(const wchar_t *filename, wchar_t *out, size_t out_len) {
-    if (!filename || !out || out_len == 0) {
-        return -1;
+static void set_cwd_to_exe_dir(void) {
+    wchar_t path[1024];
+    if (get_exe_path_utf16(path, sizeof(path) / sizeof(path[0])) != 0) {
+        return;
     }
-    if (get_exe_path_utf16(out, out_len) != 0) {
-        return -1;
-    }
-    wchar_t *slash = wcsrchr(out, L'\\');
+    wchar_t *slash = wcsrchr(path, L'\\');
     if (!slash) {
-        return -1;
+        return;
     }
-    slash[1] = L'\0';
-    if (wcslen(out) + wcslen(filename) + 1 > out_len) {
-        return -1;
-    }
-    wcscat(out, filename);
-    return 0;
+    *slash = L'\0';
+    SetCurrentDirectoryW(path);
 }
 
 static void append_line_to_boot_log(const char *line) {
-    wchar_t path[1024];
-    if (build_exe_sidecar_path_utf16(L"propagation_bot.log", path, sizeof(path) / sizeof(path[0])) != 0) {
-        wcscpy(path, L"propagation_bot.log");
-    }
-    FILE *fp = _wfopen(path, L"ab+");
+    FILE *fp = _wfopen(L"propagation_bot.log", L"ab+");
     if (!fp) {
         return;
     }
@@ -212,6 +202,45 @@ void trim_whitespace(char *text) {
         text[len - 1] = '\0';
         len--;
     }
+}
+
+int app_render_template(char *out, size_t out_len, const char *tmpl,
+                        const template_token_t *tokens, size_t token_count) {
+    sb_t sb;
+    const char *p = tmpl ? tmpl : "";
+
+    sb_init(&sb);
+    while (*p) {
+        if (p[0] == '{' && p[1] == '{') {
+            const char *end = strstr(p + 2, "}}");
+            if (end) {
+                char name[128];
+                size_t len = (size_t)(end - (p + 2));
+                const char *value = "";
+                if (len >= sizeof(name)) {
+                    len = sizeof(name) - 1;
+                }
+                memcpy(name, p + 2, len);
+                name[len] = '\0';
+                trim_whitespace(name);
+                for (size_t i = 0; i < token_count; ++i) {
+                    if (strcmp(tokens[i].name, name) == 0) {
+                        value = tokens[i].value ? tokens[i].value : "";
+                        break;
+                    }
+                }
+                sb_append(&sb, value);
+                p = end + 2;
+                continue;
+            }
+        }
+        char ch[2] = {*p++, '\0'};
+        sb_append(&sb, ch);
+    }
+
+    copy_string(out, out_len, sb.data ? sb.data : "");
+    sb_free(&sb);
+    return 0;
 }
 
 void copy_string(char *dst, size_t dst_len, const char *src) {
@@ -622,18 +651,12 @@ void app_default_db_path(char *out, size_t out_len) {
     if (!out || out_len == 0) {
         return;
     }
-#ifdef _WIN32
-    wchar_t db_path[1024];
-    if (build_exe_sidecar_path_utf16(L"propagation.db", db_path, sizeof(db_path) / sizeof(db_path[0])) == 0 &&
-        utf16_to_utf8(db_path, out, out_len) == 0) {
-        return;
-    }
-#endif
     copy_string(out, out_len, "./propagation.db");
 }
 
 void app_prepare_desktop_mode(int hide_console) {
 #ifdef _WIN32
+    set_cwd_to_exe_dir();
     setlocale(LC_ALL, ".UTF-8");
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
