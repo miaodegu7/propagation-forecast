@@ -121,6 +121,22 @@ static void send_response(app_socket_t fd, const char *status, const char *conte
     }
 }
 
+static void send_binary_response(app_socket_t fd, const char *status, const char *content_type,
+                                 const unsigned char *body, size_t body_len) {
+    char header[512];
+    int n = snprintf(header, sizeof(header),
+        "HTTP/1.1 %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Cache-Control: no-store\r\n"
+        "Connection: close\r\n\r\n",
+        status, content_type, body_len);
+    send_all(fd, header, (size_t)n);
+    if (body && body_len > 0) {
+        send_all(fd, (const char *)body, body_len);
+    }
+}
+
 static void send_redirect(app_socket_t fd, const char *location) {
     char header[512];
     int n = snprintf(header, sizeof(header),
@@ -177,6 +193,13 @@ static int get_form_value(const char *body, const char *key, char *out, size_t o
     return -1;
 }
 
+static const char *detect_psk_map_band(const char *message) {
+    if (message && (string_contains_ci(message, "2m") || string_contains_ci(message, "144"))) {
+        return "2m";
+    }
+    return "6m";
+}
+
 static int auth_ok(const settings_t *settings, const http_request_t *req) {
     if (!settings->admin_user[0] && !settings->admin_password[0]) {
         return 1;
@@ -196,7 +219,7 @@ static int auth_ok(const settings_t *settings, const http_request_t *req) {
 }
 
 static int path_needs_auth(const char *path) {
-    return strcmp(path, "/api/onebot") != 0;
+    return strcmp(path, "/api/onebot") != 0 && strcmp(path, "/api/hamalert") != 0;
 }
 
 static void append_input(sb_t *sb, const char *name, const char *label, const char *value, const char *type) {
@@ -373,6 +396,127 @@ static void render_satellite_pass_rows(const satellite_summary_t *satellite, sb_
     }
 }
 
+static void uppercase_ascii_inplace(char *text) {
+    if (!text) {
+        return;
+    }
+    for (char *p = text; *p; ++p) {
+        *p = (char)toupper((unsigned char)*p);
+    }
+}
+
+static int dashboard_match_hamalert_grid(const settings_t *settings, const char *event_grid,
+                                         char *matched_grid, size_t matched_grid_len,
+                                         char *matched_ol, size_t matched_ol_len) {
+    char grids[MAX_HUGE_TEXT];
+    char event_upper[MAX_TEXT];
+    if (!event_grid || strlen(event_grid) < 4) {
+        return 0;
+    }
+
+    if (matched_grid && matched_grid_len > 0) matched_grid[0] = '\0';
+    if (matched_ol && matched_ol_len > 0) matched_ol[0] = '\0';
+
+    copy_string(event_upper, sizeof(event_upper), event_grid);
+    uppercase_ascii_inplace(event_upper);
+
+    if (settings->psk_grids[0]) {
+        copy_string(grids, sizeof(grids), settings->psk_grids);
+    } else {
+        copy_string(grids, sizeof(grids), settings->station_grid);
+    }
+
+    char *save = NULL;
+    for (char *part = strtok_r(grids, ",|/ \t\r\n", &save); part; part = strtok_r(NULL, ",|/ \t\r\n", &save)) {
+        trim_whitespace(part);
+        if (!*part) {
+            continue;
+        }
+        uppercase_ascii_inplace(part);
+        if (prefix_matches_grid(event_upper, part)) {
+            copy_string(matched_grid, matched_grid_len, part);
+            if (strlen(event_upper) >= 4) {
+                char ol[3] = {event_upper[2], event_upper[3], '\0'};
+                copy_string(matched_ol, matched_ol_len, ol);
+            }
+            return 1;
+        }
+        if (settings->hamalert_match_ol &&
+            strlen(event_upper) >= 4 && strlen(part) >= 4 &&
+            isdigit((unsigned char)event_upper[2]) && isdigit((unsigned char)event_upper[3]) &&
+            isdigit((unsigned char)part[2]) && isdigit((unsigned char)part[3]) &&
+            event_upper[2] == part[2] && event_upper[3] == part[3]) {
+            copy_string(matched_grid, matched_grid_len, part);
+            {
+                char ol[3] = {event_upper[2], event_upper[3], '\0'};
+                copy_string(matched_ol, matched_ol_len, ol);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static const char *hamalert_event_locator(const hamalert_event_t *event) {
+    if (event->locator[0]) return event->locator;
+    if (event->dx_locator[0]) return event->dx_locator;
+    if (event->spotter_locator[0]) return event->spotter_locator;
+    return "";
+}
+
+static void render_hamalert_rows(app_t *app, sb_t *html, const settings_t *settings, const char *band, int max_rows) {
+    time_t cutoff = time(NULL) - settings->psk_window_minutes * 60;
+    int emitted = 0;
+
+    pthread_mutex_lock(&app->hamalert_mutex);
+    for (size_t step = 0; step < app->hamalert_count && emitted < max_rows; ++step) {
+        size_t idx = (app->hamalert_head + MAX_HAMALERT_EVENTS - 1 - step) % MAX_HAMALERT_EVENTS;
+        const hamalert_event_t *event = &app->hamalert_events[idx];
+        char matched_grid[MAX_TEXT] = "";
+        char matched_ol[16] = "";
+        const char *locator = hamalert_event_locator(event);
+        char when[MAX_TEXT];
+
+        if (!event->in_use || event->timestamp < cutoff) {
+            continue;
+        }
+        if (band && *band && strcasecmp(event->band, band) != 0) {
+            continue;
+        }
+        if (!dashboard_match_hamalert_grid(settings, locator, matched_grid, sizeof(matched_grid), matched_ol, sizeof(matched_ol))) {
+            continue;
+        }
+
+        format_time_local(event->timestamp, when, sizeof(when));
+        sb_append(html, "<tr><td>");
+        html_escape_to_sb(html, when);
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, event->source[0] ? event->source : "HamAlert");
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, event->callsign[0] ? event->callsign : "-");
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, event->spotter_call[0] ? event->spotter_call : "-");
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, locator[0] ? locator : "-");
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, matched_grid[0] ? matched_grid : "-");
+        if (matched_ol[0]) {
+            sb_append(html, " / OL");
+            html_escape_to_sb(html, matched_ol);
+        }
+        sb_append(html, "</td><td>");
+        html_escape_to_sb(html, event->mode[0] ? event->mode : "-");
+        sb_append(html, "</td></tr>");
+        emitted++;
+    }
+    pthread_mutex_unlock(&app->hamalert_mutex);
+
+    if (emitted == 0) {
+        sb_appendf(html, "<tr><td colspan=\"7\">最近窗口内还没有与本地网格相关的 %s HamAlert 事件</td></tr>",
+            band && *band ? band : "VHF");
+    }
+}
+
 static void save_form_setting(app_t *app, const char *body, const char *key) {
     char value[16384];
     if (get_form_value(body, key, value, sizeof(value)) == 0) {
@@ -480,24 +624,38 @@ static void save_settings_from_form(app_t *app, const char *body) {
         "psk_radius_km", "psk_window_minutes", "rate_limit_per_minute",
         "geomag_alert_enabled", "geomag_alert_threshold_g",
         "sixm_alert_enabled", "sixm_alert_interval_minutes", "sixm_psk_trigger_spots",
+        "twom_alert_enabled", "twom_alert_interval_minutes", "twom_psk_trigger_spots",
+        "hamalert_enabled", "hamalert_webhook_token", "hamalert_match_ol", "hamalert_use_for_6m", "hamalert_use_for_2m",
         "tropo_source_url", "tropo_forecast_hours", "tropo_send_image",
         "meteor_source_url", "meteor_enabled", "meteor_selected_showers", "meteor_max_items",
         "satellite_source_url", "satellite_api_base", "satellite_api_key", "satellite_enabled",
         "satellite_days", "satellite_min_elevation", "satellite_window_start", "satellite_window_end",
         "satellite_mode_filter", "satellite_max_items",
         "hamqsl_widget_url", "hamqsl_selected_fields", "include_source_urls", "include_hamqsl_widget",
-        "report_template_full", "report_template_6m", "report_template_solar",
-        "report_template_geomag", "report_template_open6m", "help_template",
+        "report_template_full", "report_template_6m", "report_template_2m", "report_template_solar",
+        "report_template_geomag", "report_template_open6m", "report_template_open2m", "help_template",
         "compact_template_hamqsl", "compact_template_hamqsl_unavailable",
         "section_template_weather", "section_template_weather_unavailable",
         "section_template_tropo", "section_template_tropo_unavailable",
         "section_template_solar", "section_template_solar_unavailable",
         "compact_template_meteor", "compact_template_meteor_unavailable",
         "section_template_satellite", "section_template_satellite_unavailable",
-        "section_template_6m", "section_template_analysis",
+        "section_template_6m", "section_template_2m", "section_template_analysis",
         "compact_template_hamqsl_image",
         "report_template_pskmap", "report_template_pskmap_failed",
-        "trigger_full", "trigger_6m", "trigger_solar", "trigger_help", "trigger_pskmap"
+        "wording_psk_assessment_open", "wording_psk_assessment_possible", "wording_psk_assessment_global_only",
+        "wording_psk_assessment_quiet", "wording_psk_assessment_disconnected",
+        "wording_psk_assessment_hamalert_open", "wording_psk_assessment_hamalert_hint",
+        "wording_psk_confidence_high", "wording_psk_confidence_medium", "wording_psk_confidence_low",
+        "wording_psk_confidence_unknown", "wording_alert_none", "wording_alert_info",
+        "wording_alert_watch", "wording_alert_strong",
+        "lotw_enabled", "lotw_login", "lotw_password", "lotw_station_callsign",
+        "lotw_sync_interval_minutes", "lotw_fetch_qso_enabled", "lotw_fetch_qsl_enabled",
+        "clublog_callsign", "clublog_api_key", "clublog_app_password",
+        "qrz_callsign", "qrz_logbook_api_key", "award_recent_days",
+        "report_template_dxcc", "report_template_vucc", "report_template_qrz_award",
+        "trigger_dxcc", "trigger_vucc", "trigger_qrz_award",
+        "trigger_full", "trigger_6m", "trigger_2m", "trigger_solar", "trigger_help", "trigger_pskmap"
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
         save_form_setting(app, body, keys[i]);
@@ -591,8 +749,11 @@ static char *render_dashboard(app_t *app) {
         snapshot.refreshed_at == 0 ||
         difftime(now, snapshot.refreshed_at) >= clamp_int(settings.snapshot_rebuild_seconds, 15, 600));
 
-    sb_t recent_spots, logs_rows, targets_rows, schedule_rows, satellite_rows, page;
+    sb_t recent_spots, recent_twom_spots, recent_hamalert_6m, recent_hamalert_2m, logs_rows, targets_rows, schedule_rows, satellite_rows, page;
     sb_init(&recent_spots);
+    sb_init(&recent_twom_spots);
+    sb_init(&recent_hamalert_6m);
+    sb_init(&recent_hamalert_2m);
     sb_init(&logs_rows);
     sb_init(&targets_rows);
     sb_init(&schedule_rows);
@@ -600,6 +761,9 @@ static char *render_dashboard(app_t *app) {
     sb_init(&page);
 
     psk_append_recent_rows(app, &recent_spots, &settings, 12);
+    psk_append_recent_rows_for_band(app, &recent_twom_spots, &settings, "2m", 12);
+    render_hamalert_rows(app, &recent_hamalert_6m, &settings, "6m", 8);
+    render_hamalert_rows(app, &recent_hamalert_2m, &settings, "2m", 8);
     storage_load_recent_logs(app, &logs_rows);
     render_targets_table(app, &targets_rows);
     render_schedule_table(app, &schedule_rows);
@@ -626,13 +790,19 @@ static char *render_dashboard(app_t *app) {
         "pre{margin:0;white-space:pre-wrap;background:#1f2937;color:#f8fafc;padding:14px;border-radius:16px;overflow:auto;}"
         ".muted{color:var(--muted);} .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#efe1cf;color:#7a4b12;margin-right:6px;font-size:12px;}"
         ".toolbar{display:flex;gap:10px;flex-wrap:wrap;}.toolbar form{margin:0;} .help{font-size:12px;color:var(--muted);}"
+        ".drawer{margin:12px 0;border:1px solid #eadfce;border-radius:18px;background:#fffaf4;overflow:hidden;}"
+        ".drawer summary{cursor:pointer;list-style:none;padding:14px 16px;font-weight:700;}"
+        ".drawer summary::-webkit-details-marker{display:none;}"
+        ".drawer[open] summary{border-bottom:1px solid #eadfce;}"
+        ".drawer-body{padding:16px;}"
         "@media (max-width:800px){.two,.three{grid-template-columns:1fr;}}"
         "</style></head><body><div class=\"wrap\">");
 
     sb_appendf(&page,
         "<section class=\"hero\"><h1>%s</h1><p>台站 %s / %s / 时区 %s</p>"
         "<p>OneBot 回调地址：<code>/api/onebot?token=%s</code></p>"
-        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span><span class=\"pill\">卫星 %s / %d 条</span></p>"
+        "<p>HamAlert Webhook：<code>/api/hamalert?token=%s</code></p>"
+        "<p><span class=\"pill\">6m %s</span><span class=\"pill\">2m %s</span><span class=\"pill\">太阳 %s</span><span class=\"pill\">流星雨 %s</span><span class=\"pill\">卫星 %s / %d 条</span></p>"
         "<p><span class=\"pill\" id=\"refresh-state\">刷新 %s</span><span class=\"pill\" id=\"refresh-time\">%s</span><span class=\"pill\" id=\"refresh-age\">%s</span></p>"
         "<p class=\"help\" id=\"refresh-detail\">%s</p></section>",
         settings.bot_name[0] ? settings.bot_name : APP_NAME,
@@ -640,7 +810,9 @@ static char *render_dashboard(app_t *app) {
         settings.station_grid,
         settings.timezone,
         settings.onebot_webhook_token,
+        settings.hamalert_webhook_token,
         snapshot.psk.assessment,
+        snapshot.twom.assessment,
         snapshot.sun_summary,
         snapshot.meteor.valid ? snapshot.meteor.shower_name : "未获取",
         snapshot.satellite.valid ? snapshot.satellite.api_status : "未获取",
@@ -659,13 +831,28 @@ static char *render_dashboard(app_t *app) {
         "<form method=\"post\" action=\"/actions/refresh\" id=\"refresh-form\"><button type=\"submit\" id=\"refresh-button\">立即刷新</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"full\"><button type=\"submit\">发送完整简报</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"6m\"><button type=\"submit\">发送 6m 简报</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"2m\"><button type=\"submit\">发送 2m 简报</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"open6m\"><button type=\"submit\">测试 6m 告警</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"open2m\"><button type=\"submit\">测试 2m 告警</button></form>"
         "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"solar\"><button type=\"submit\">发送太阳简报</button></form>"
-        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"pskmap\"><button type=\"submit\">发送 PSK 图</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"pskmap6m\"><button type=\"submit\">发送 6m 图</button></form>"
+        "<form method=\"post\" action=\"/actions/send\"><input type=\"hidden\" name=\"kind\" value=\"pskmap2m\"><button type=\"submit\">发送 2m 图</button></form>"
         "</div></section>");
 
     sb_append(&page, "<section class=\"card\"><h2>消息预览</h2><pre>");
     html_escape_to_sb(&page, snapshot.report_text);
     sb_append(&page, "</pre></section>");
+    sb_append(&page, "</div>");
+
+    sb_append(&page, "<div class=\"grid\">");
+    sb_append(&page, "<section class=\"card\"><h2>6m 图片预览</h2><p class=\"help\">这张图来自程序本地渲染，不再依赖网页截图。</p>");
+    sb_appendf(&page, "<img src=\"/api/pskmap.png?band=6m&t=%lld\" alt=\"6m map\" style=\"width:100%%;border-radius:18px;border:1px solid #eadfce;background:#fffaf4;display:block;\">",
+        (long long)snapshot.refreshed_at);
+    sb_append(&page, "</section>");
+    sb_append(&page, "<section class=\"card\"><h2>2m 图片预览</h2><p class=\"help\">问机器人时如果消息里带 2m 或 144，会优先发送这张图。</p>");
+    sb_appendf(&page, "<img src=\"/api/pskmap.png?band=2m&t=%lld\" alt=\"2m map\" style=\"width:100%%;border-radius:18px;border:1px solid #eadfce;background:#fffaf4;display:block;\">",
+        (long long)snapshot.refreshed_at);
+    sb_append(&page, "</section>");
     sb_append(&page, "</div>");
 
     sb_append(&page, "<div class=\"grid\">");
@@ -709,6 +896,14 @@ static char *render_dashboard(app_t *app) {
     append_select_yesno(&page, "sixm_alert_enabled", "6m 告警", settings.sixm_alert_enabled);
     append_input_int(&page, "sixm_alert_interval_minutes", "6m 重发分钟", settings.sixm_alert_interval_minutes);
     append_input_int(&page, "sixm_psk_trigger_spots", "PSK 触发条数", settings.sixm_psk_trigger_spots);
+    append_select_yesno(&page, "twom_alert_enabled", "2m 告警", settings.twom_alert_enabled);
+    append_input_int(&page, "twom_alert_interval_minutes", "2m 重发分钟", settings.twom_alert_interval_minutes);
+    append_input_int(&page, "twom_psk_trigger_spots", "2m PSK/HamAlert 触发条数", settings.twom_psk_trigger_spots);
+    append_select_yesno(&page, "hamalert_enabled", "HamAlert 接收", settings.hamalert_enabled);
+    append_input(&page, "hamalert_webhook_token", "HamAlert Webhook Token", settings.hamalert_webhook_token, "text");
+    append_select_yesno(&page, "hamalert_match_ol", "按梅登海德 OL 数字匹配", settings.hamalert_match_ol);
+    append_select_yesno(&page, "hamalert_use_for_6m", "HamAlert 参与 6m 判断", settings.hamalert_use_for_6m);
+    append_select_yesno(&page, "hamalert_use_for_2m", "HamAlert 参与 2m 判断", settings.hamalert_use_for_2m);
     append_input(&page, "tropo_source_url", "F5LEN 页面", settings.tropo_source_url, "text");
     append_input_int(&page, "tropo_forecast_hours", "Tropo 预测小时", settings.tropo_forecast_hours);
     append_select_yesno(&page, "tropo_send_image", "发送 Tropo 图", settings.tropo_send_image);
@@ -731,67 +926,116 @@ static char *render_dashboard(app_t *app) {
     append_input(&page, "satellite_window_end", "结束时间", settings.satellite_window_end, "text");
     append_select_mode(&page, "satellite_mode_filter", "模式过滤", settings.satellite_mode_filter);
     append_input_int(&page, "satellite_max_items", "最多显示条数", settings.satellite_max_items);
+    sb_append(&page, "</div><h3>日志与奖项</h3><div class=\"three\">");
+    append_select_yesno(&page, "lotw_enabled", "启用 LoTW 同步", settings.lotw_enabled);
+    append_input(&page, "lotw_login", "LoTW 登录名", settings.lotw_login, "text");
+    append_input(&page, "lotw_password", "LoTW 密码", settings.lotw_password, "password");
+    append_input(&page, "lotw_station_callsign", "LoTW 台站呼号", settings.lotw_station_callsign, "text");
+    append_input_int(&page, "lotw_sync_interval_minutes", "LoTW 同步间隔(分钟)", settings.lotw_sync_interval_minutes);
+    append_select_yesno(&page, "lotw_fetch_qso_enabled", "同步新 QSO", settings.lotw_fetch_qso_enabled);
+    append_select_yesno(&page, "lotw_fetch_qsl_enabled", "同步新 QSL", settings.lotw_fetch_qsl_enabled);
+    append_input(&page, "clublog_callsign", "Club Log 呼号", settings.clublog_callsign, "text");
+    append_input(&page, "clublog_api_key", "Club Log API Key", settings.clublog_api_key, "text");
+    append_input(&page, "clublog_app_password", "Club Log App Password", settings.clublog_app_password, "password");
+    append_input(&page, "qrz_callsign", "QRZ 呼号", settings.qrz_callsign, "text");
+    append_input(&page, "qrz_logbook_api_key", "QRZ Logbook API Key", settings.qrz_logbook_api_key, "text");
+    append_input_int(&page, "award_recent_days", "奖项近期待认天数", settings.award_recent_days);
     sb_append(&page, "</div>");
     append_textarea(&page, "hamqsl_selected_fields", "HAMqsl 显示字段(csv)", settings.hamqsl_selected_fields, 3);
     sb_append(&page, "<div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">保存设置</button></div></form></section>");
 
     sb_append(&page, "<section class=\"card\"><h2>模板与问词</h2><form method=\"post\" action=\"/settings/save\">");
+    sb_append(&page, "<details class=\"drawer\" open><summary>主消息模板</summary><div class=\"drawer-body\">");
     append_textarea(&page, "report_template_full", "完整简报模板", settings.report_template_full, 8);
     append_textarea(&page, "report_template_6m", "6m 简报模板", settings.report_template_6m, 6);
+    append_textarea(&page, "report_template_2m", "2m 简报模板", settings.report_template_2m, 6);
     append_textarea(&page, "report_template_solar", "太阳简报模板", settings.report_template_solar, 5);
     append_textarea(&page, "report_template_geomag", "地磁告警模板", settings.report_template_geomag, 4);
     append_textarea(&page, "report_template_open6m", "6m 告警模板", settings.report_template_open6m, 5);
+    append_textarea(&page, "report_template_open2m", "2m 告警模板", settings.report_template_open2m, 5);
     append_textarea(&page, "help_template", "帮助回复模板", settings.help_template, 4);
-    append_textarea(&page, "compact_template_hamqsl", "HAMqsl 精简段模板", settings.compact_template_hamqsl, 5);
-    append_textarea(&page, "compact_template_meteor", "流星雨精简段模板", settings.compact_template_meteor, 5);
-    append_textarea(&page, "compact_template_hamqsl_image", "HAMqsl 日图段模板", settings.compact_template_hamqsl_image, 3);
     append_textarea(&page, "report_template_pskmap", "PSK 快照模板", settings.report_template_pskmap, 5);
     append_textarea(&page, "report_template_pskmap_failed", "PSK 快照失败模板", settings.report_template_pskmap_failed, 5);
+    append_textarea(&page, "report_template_dxcc", "DXCC 查询模板", settings.report_template_dxcc, 5);
+    append_textarea(&page, "report_template_vucc", "VUCC 查询模板", settings.report_template_vucc, 5);
+    append_textarea(&page, "report_template_qrz_award", "QRZ 奖项模板", settings.report_template_qrz_award, 5);
+    sb_append(&page, "</div></details>");
+
+    sb_append(&page, "<details class=\"drawer\"><summary>分段模板</summary><div class=\"drawer-body\">");
+    append_textarea(&page, "compact_template_hamqsl", "HAMqsl 精简段模板", settings.compact_template_hamqsl, 5);
     append_textarea(&page, "compact_template_hamqsl_unavailable", "HAMqsl 不可用模板", settings.compact_template_hamqsl_unavailable, 3);
+    append_textarea(&page, "compact_template_meteor", "流星雨精简段模板", settings.compact_template_meteor, 5);
+    append_textarea(&page, "compact_template_meteor_unavailable", "流星雨不可用模板", settings.compact_template_meteor_unavailable, 3);
     append_textarea(&page, "section_template_weather", "天气分段模板", settings.section_template_weather, 6);
     append_textarea(&page, "section_template_weather_unavailable", "天气不可用模板", settings.section_template_weather_unavailable, 3);
     append_textarea(&page, "section_template_tropo", "Tropo 分段模板", settings.section_template_tropo, 5);
     append_textarea(&page, "section_template_tropo_unavailable", "Tropo 不可用模板", settings.section_template_tropo_unavailable, 3);
     append_textarea(&page, "section_template_solar", "太阳分段模板", settings.section_template_solar, 5);
     append_textarea(&page, "section_template_solar_unavailable", "太阳不可用模板", settings.section_template_solar_unavailable, 3);
-    append_textarea(&page, "compact_template_meteor_unavailable", "流星雨不可用模板", settings.compact_template_meteor_unavailable, 3);
     append_textarea(&page, "section_template_satellite", "卫星分段模板", settings.section_template_satellite, 5);
     append_textarea(&page, "section_template_satellite_unavailable", "卫星不可用模板", settings.section_template_satellite_unavailable, 3);
     append_textarea(&page, "section_template_6m", "6m 分段模板", settings.section_template_6m, 6);
+    append_textarea(&page, "section_template_2m", "2m 分段模板", settings.section_template_2m, 6);
     append_textarea(&page, "section_template_analysis", "综合分析模板", settings.section_template_analysis, 4);
     append_textarea(&page, "compact_template_hamqsl_image", "来源 / 图片分段模板", settings.compact_template_hamqsl_image, 4);
-    sb_append(&page, "<div class=\"three\">");
+    sb_append(&page, "</div></details>");
+
+    sb_append(&page, "<details class=\"drawer\"><summary>状态词自定义</summary><div class=\"drawer-body\"><div class=\"three\">");
+    append_input(&page, "wording_psk_assessment_open", "PSK: 明显开口", settings.wording_psk_assessment_open, "text");
+    append_input(&page, "wording_psk_assessment_possible", "PSK: 开口迹象", settings.wording_psk_assessment_possible, "text");
+    append_input(&page, "wording_psk_assessment_global_only", "PSK: 全球活跃", settings.wording_psk_assessment_global_only, "text");
+    append_input(&page, "wording_psk_assessment_quiet", "PSK: 暂未见开口", settings.wording_psk_assessment_quiet, "text");
+    append_input(&page, "wording_psk_assessment_disconnected", "PSK: 数据未连接", settings.wording_psk_assessment_disconnected, "text");
+    append_input(&page, "wording_psk_assessment_hamalert_open", "HamAlert: 开口报告", settings.wording_psk_assessment_hamalert_open, "text");
+    append_input(&page, "wording_psk_assessment_hamalert_hint", "HamAlert: 相关线索", settings.wording_psk_assessment_hamalert_hint, "text");
+    append_input(&page, "wording_psk_confidence_high", "置信度: 高", settings.wording_psk_confidence_high, "text");
+    append_input(&page, "wording_psk_confidence_medium", "置信度: 中", settings.wording_psk_confidence_medium, "text");
+    append_input(&page, "wording_psk_confidence_low", "置信度: 低", settings.wording_psk_confidence_low, "text");
+    append_input(&page, "wording_psk_confidence_unknown", "置信度: 未知", settings.wording_psk_confidence_unknown, "text");
+    append_input(&page, "wording_alert_none", "提醒级别: 无", settings.wording_alert_none, "text");
+    append_input(&page, "wording_alert_info", "提醒级别: 一般", settings.wording_alert_info, "text");
+    append_input(&page, "wording_alert_watch", "提醒级别: 重点观察", settings.wording_alert_watch, "text");
+    append_input(&page, "wording_alert_strong", "提醒级别: 强提醒", settings.wording_alert_strong, "text");
+    sb_append(&page, "</div><p class=\"help\">这些字段会直接影响 {{psk_assessment}}、{{psk_confidence}}、{{sixm_alert_level}}、{{twom_alert_level}} 等模板标记。这样除了基础数值外，消息里的状态词基本都可以由你自己掌控。</p></div></details>");
+
+    sb_append(&page, "<details class=\"drawer\"><summary>问词与变量</summary><div class=\"drawer-body\"><div class=\"three\">");
     append_input(&page, "trigger_full", "完整简报问词", settings.trigger_full, "text");
     append_input(&page, "trigger_6m", "6m 问词", settings.trigger_6m, "text");
+    append_input(&page, "trigger_2m", "2m 问词", settings.trigger_2m, "text");
     append_input(&page, "trigger_solar", "太阳问词", settings.trigger_solar, "text");
-    sb_append(&page, "</div>");
-    sb_append(&page, "<div class=\"two\">");
+    sb_append(&page, "</div><div class=\"two\">");
     append_input(&page, "trigger_help", "帮助问词", settings.trigger_help, "text");
     append_input(&page, "trigger_pskmap", "PSK 图问词", settings.trigger_pskmap, "text");
+    append_input(&page, "trigger_dxcc", "DXCC 问词", settings.trigger_dxcc, "text");
+    append_input(&page, "trigger_vucc", "VUCC 问词", settings.trigger_vucc, "text");
+    append_input(&page, "trigger_qrz_award", "QRZ 奖项问词", settings.trigger_qrz_award, "text");
     sb_append(&page, "</div>");
-    sb_append(&page, "<p class=\"help\">可用模板标记：{{bot_name}} {{station_name}} {{station_grid}} {{psk_grids}} {{section_hamqsl}} {{section_weather}} {{section_tropo}} {{section_6m}} {{section_solar}} {{section_meteor}} {{section_satellite}} {{section_sources}} {{analysis_summary}} {{refreshed_at}} {{geomag_g}} {{sixm_alert_level}} {{updated}} {{kindex}} {{geomagfield}} {{hf_day}} {{hf_night}} {{ham_solarflux}} {{ham_aindex}} {{ham_kindex}} {{ham_xray}} {{ham_sunspots}} {{ham_muf}} {{weather_level}} {{weather_score}} {{tropo_category}} {{tropo_score}} {{meteor_name}} {{meteor_name_cn}} {{meteor_peak}} {{meteor_days_left}} {{peak_date}} {{peak_date_cn}} {{days_left}} {{countdown_text}} {{moon_percent}} {{hamqsl_widget_url}}</p><p class=\"help\">推荐做法：完整简报里保留 {{section_hamqsl}} / {{section_meteor}} / {{section_sources}}，需要更细时再在下面三个精简模板里改固定文字。</p><div class=\"toolbar\"><button type=\"submit\">保存模板</button></div></form></section>");
+    sb_append(&page, "<p class=\"help\">可用模板标记：{{bot_name}} {{station_name}} {{station_grid}} {{psk_grids}} {{section_hamqsl}} {{section_weather}} {{section_tropo}} {{section_6m}} {{section_2m}} {{section_solar}} {{section_meteor}} {{section_satellite}} {{section_sources}} {{analysis_summary}} {{refreshed_at}} {{geomag_g}} {{sixm_alert_level}} {{twom_alert_level}} {{updated}} {{kindex}} {{geomagfield}} {{hf_day}} {{hf_night}} {{ham_solarflux}} {{ham_aindex}} {{ham_kindex}} {{ham_xray}} {{ham_sunspots}} {{ham_muf}} {{weather_level}} {{weather_score}} {{twom_weather_level}} {{twom_weather_score}} {{tropo_category}} {{tropo_score}} {{meteor_name}} {{meteor_name_cn}} {{meteor_peak}} {{meteor_days_left}} {{peak_date}} {{peak_date_cn}} {{days_left}} {{countdown_text}} {{moon_percent}} {{hamqsl_widget_url}} {{psk_hamalert_hits_15m}} {{psk_hamalert_hits_60m}} {{psk_hamalert_latest_text}} {{twom_hamalert_hits_15m}} {{twom_hamalert_hits_60m}} {{twom_hamalert_latest_text}}</p>");
+    awards_append_template_help(&page);
+    sb_append(&page, "<p class=\"help\">推荐做法：完整简报里保留 {{section_hamqsl}} / {{section_meteor}} / {{section_sources}}，按波段分别在 6m/2m 分段模板里自定义固定文字；状态词则放到上面的“状态词自定义”抽屉里处理。</p></div></details>");
+    sb_append(&page, "<div class=\"toolbar\"><button type=\"submit\">保存模板</button></div></form></section>");
     sb_append(&page, "</div>");
 
     sb_append(&page, "<div class=\"grid\">");
-    sb_append(&page, "<section class=\"card\"><h2>推送目标</h2><table><tr><th>名称</th><th>类型</th><th>ID</th><th>推送</th><th>问答</th><th>备注</th><th>操作</th></tr>");
+    sb_append(&page, "<section class=\"card\"><h2>推送目标</h2><details class=\"drawer\" open><summary>当前目标</summary><div class=\"drawer-body\"><table><tr><th>名称</th><th>类型</th><th>ID</th><th>推送</th><th>问答</th><th>备注</th><th>操作</th></tr>");
     sb_append(&page, targets_rows.data ? targets_rows.data : "");
-    sb_append(&page, "</table><h3>新增目标</h3><form method=\"post\" action=\"/targets/add\"><div class=\"three\">");
+    sb_append(&page, "</table></div></details><details class=\"drawer\"><summary>新增目标</summary><div class=\"drawer-body\"><form method=\"post\" action=\"/targets/add\"><div class=\"three\">");
     append_input(&page, "label", "名称", "", "text");
     sb_append(&page, "<label><span>类型</span><select name=\"type\"><option value=\"group\">群聊</option><option value=\"private\">私聊</option></select></label>");
     append_input(&page, "target_id", "群号 / QQ", "", "text");
     append_select_yesno(&page, "enabled", "启用推送", 1);
     append_select_yesno(&page, "command_enabled", "允许问答", 1);
     append_input(&page, "notes", "备注", "", "text");
-    sb_append(&page, "</div><div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">添加目标</button></div></form></section>");
+    sb_append(&page, "</div><div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">添加目标</button></div></form></div></details></section>");
 
-    sb_append(&page, "<section class=\"card\"><h2>定时任务</h2><table><tr><th>名称</th><th>类型</th><th>时间</th><th>状态</th><th>上次发送</th><th>操作</th></tr>");
+    sb_append(&page, "<section class=\"card\"><h2>定时任务</h2><details class=\"drawer\" open><summary>当前任务</summary><div class=\"drawer-body\"><table><tr><th>名称</th><th>类型</th><th>时间</th><th>状态</th><th>上次发送</th><th>操作</th></tr>");
     sb_append(&page, schedule_rows.data ? schedule_rows.data : "");
-    sb_append(&page, "</table><h3>新增定时</h3><form method=\"post\" action=\"/schedules/add\"><div class=\"three\">");
+    sb_append(&page, "</table></div></details><details class=\"drawer\"><summary>新增定时</summary><div class=\"drawer-body\"><form method=\"post\" action=\"/schedules/add\"><div class=\"three\">");
     append_input(&page, "label", "任务名", "", "text");
-    sb_append(&page, "<label><span>简报类型</span><select name=\"report_kind\"><option value=\"full\">full</option><option value=\"6m\">6m</option><option value=\"solar\">solar</option><option value=\"pskmap\">pskmap</option><option value=\"help\">help</option></select></label>");
+    sb_append(&page, "<label><span>简报类型</span><select name=\"report_kind\"><option value=\"full\">full</option><option value=\"6m\">6m</option><option value=\"2m\">2m</option><option value=\"open6m\">open6m</option><option value=\"open2m\">open2m</option><option value=\"solar\">solar</option><option value=\"pskmap6m\">pskmap6m</option><option value=\"pskmap2m\">pskmap2m</option><option value=\"pskmap\">pskmap</option><option value=\"help\">help</option></select></label>");
     append_input(&page, "hhmm", "时间(HH:MM)", "", "text");
     append_select_yesno(&page, "enabled", "启用", 1);
-    sb_append(&page, "</div><div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">添加定时</button></div></form></section>");
+    sb_append(&page, "</div><div class=\"toolbar\" style=\"margin-top:12px;\"><button type=\"submit\">添加定时</button></div></form></div></details></section>");
     sb_append(&page, "</div>");
 
     sb_append(&page, "<div class=\"grid\">");
@@ -807,6 +1051,29 @@ static char *render_dashboard(app_t *app) {
 
     sb_append(&page, "<section class=\"card\"><h2>最近 6m Spot</h2><table><tr><th>时间</th><th>命中网格</th><th>发送方</th><th>接收方</th><th>模式</th><th>SNR</th><th>距离</th></tr>");
     sb_append(&page, recent_spots.data ? recent_spots.data : "");
+    sb_append(&page, "</table></section>");
+    sb_append(&page, "<section class=\"card\"><h2>最近 2m Spot</h2><table><tr><th>时间</th><th>命中网格</th><th>发送方</th><th>接收方</th><th>模式</th><th>SNR</th><th>距离</th></tr>");
+    sb_append(&page, recent_twom_spots.data ? recent_twom_spots.data : "");
+    sb_append(&page, "</table></section>");
+    sb_append(&page, "<section class=\"card\"><h2>最近 6m HamAlert</h2><p>");
+    sb_appendf(&page,
+        "<span class=\"pill\">15 分钟 %d 条</span><span class=\"pill\">%d 分钟 %d 条</span><span class=\"pill\">最近 %s</span>",
+        snapshot.psk.hamalert_hits_15m,
+        settings.psk_window_minutes,
+        snapshot.psk.hamalert_hits_60m,
+        snapshot.psk.hamalert_latest_time[0] ? snapshot.psk.hamalert_latest_time : "暂无");
+    sb_append(&page, "</p><table><tr><th>时间</th><th>来源</th><th>呼号</th><th>Spotter</th><th>网格</th><th>命中</th><th>模式</th></tr>");
+    sb_append(&page, recent_hamalert_6m.data ? recent_hamalert_6m.data : "");
+    sb_append(&page, "</table></section>");
+    sb_append(&page, "<section class=\"card\"><h2>最近 2m HamAlert</h2><p>");
+    sb_appendf(&page,
+        "<span class=\"pill\">15 分钟 %d 条</span><span class=\"pill\">%d 分钟 %d 条</span><span class=\"pill\">最近 %s</span>",
+        snapshot.twom.hamalert_hits_15m,
+        settings.psk_window_minutes,
+        snapshot.twom.hamalert_hits_60m,
+        snapshot.twom.hamalert_latest_time[0] ? snapshot.twom.hamalert_latest_time : "暂无");
+    sb_append(&page, "</p><table><tr><th>时间</th><th>来源</th><th>呼号</th><th>Spotter</th><th>网格</th><th>命中</th><th>模式</th></tr>");
+    sb_append(&page, recent_hamalert_2m.data ? recent_hamalert_2m.data : "");
     sb_append(&page, "</table></section>");
     sb_append(&page, "</div>");
 
@@ -839,10 +1106,18 @@ static char *render_dashboard(app_t *app) {
     sb_append(&page, "<section class=\"card\"><h2>6m 预览</h2><pre>");
     html_escape_to_sb(&page, snapshot.report_6m);
     sb_append(&page, "</pre></section>");
+    sb_append(&page, "<section class=\"card\"><h2>2m 预览</h2><pre>");
+    html_escape_to_sb(&page, snapshot.report_2m);
+    sb_append(&page, "</pre></section>");
+    sb_append(&page, "</div>");
+
+    sb_append(&page, "<div class=\"grid\">");
     sb_append(&page, "<section class=\"card\"><h2>太阳预览</h2><pre>");
     html_escape_to_sb(&page, snapshot.report_solar);
     sb_append(&page, "</pre></section>");
     sb_append(&page, "</div>");
+
+    awards_render_dashboard_html(app, &page);
 
     sb_append(&page, "<section class=\"card\" style=\"margin-top:18px;\"><h2>运行日志</h2><table><tr><th>时间</th><th>级别</th><th>内容</th></tr>");
     sb_append(&page, logs_rows.data ? logs_rows.data : "");
@@ -863,6 +1138,9 @@ static char *render_dashboard(app_t *app) {
         (long long)snapshot.refreshed_at);
 
     sb_free(&recent_spots);
+    sb_free(&recent_twom_spots);
+    sb_free(&recent_hamalert_6m);
+    sb_free(&recent_hamalert_2m);
     sb_free(&logs_rows);
     sb_free(&targets_rows);
     sb_free(&schedule_rows);
@@ -987,13 +1265,19 @@ static void handle_onebot_webhook(app_t *app, app_socket_t fd, const http_reques
     snapshot_t snapshot = app->snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
 
+    char award_reply[MAX_REPORT_TEXT];
+    award_reply[0] = '\0';
     const char *reply = NULL;
-    if (message_matches_trigger_csv(raw_message, settings.trigger_help)) {
+    if (awards_render_query_reply(app, raw_message, award_reply, sizeof(award_reply)) == 0 && award_reply[0]) {
+        reply = award_reply;
+    } else if (message_matches_trigger_csv(raw_message, settings.trigger_help)) {
         reply = snapshot.report_help;
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_pskmap)) {
-        psk_send_snapshot_image(app, type, target_id);
+        psk_send_snapshot_image_for_band(app, type, target_id, detect_psk_map_band(raw_message));
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_6m)) {
         reply = snapshot.report_6m;
+    } else if (message_matches_trigger_csv(raw_message, settings.trigger_2m)) {
+        reply = snapshot.report_2m;
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_solar)) {
         reply = snapshot.report_solar;
     } else if (message_matches_trigger_csv(raw_message, settings.trigger_full)) {
@@ -1043,6 +1327,24 @@ static void handle_request(app_t *app, app_socket_t fd, const http_request_t *re
             send_response(fd, rc == 0 ? "202 Accepted" : "200 OK", "application/json", json.data ? json.data : "{}");
         }
         sb_free(&json);
+        return;
+    }
+    if (strcmp(req->path, "/api/pskmap.png") == 0 && strcmp(req->method, "GET") == 0) {
+        char band[MAX_SMALL_TEXT] = {0};
+        unsigned char *png_data = NULL;
+        size_t png_size = 0;
+        char detail[256] = {0};
+        if (get_form_value(req->query, "band", band, sizeof(band)) != 0) {
+            copy_string(band, sizeof(band), "6m");
+        }
+        if (psk_render_snapshot_png_for_band(app, band, &png_data, &png_size, detail, sizeof(detail)) == 0 &&
+            png_data && png_size > 0) {
+            send_binary_response(fd, "200 OK", "image/png", png_data, png_size);
+            free(png_data);
+        } else {
+            free(png_data);
+            send_response(fd, "500 Internal Server Error", "text/plain", detail[0] ? detail : "map render failed");
+        }
         return;
     }
     if (strcmp(req->path, "/settings/save") == 0 && strcmp(req->method, "POST") == 0) {
@@ -1130,8 +1432,28 @@ static void handle_request(app_t *app, app_socket_t fd, const http_request_t *re
         send_redirect(fd, "/");
         return;
     }
+    if (strcmp(req->path, "/actions/lotw_sync") == 0 && strcmp(req->method, "POST") == 0) {
+        awards_sync_lotw(app, 0);
+        send_redirect(fd, "/");
+        return;
+    }
     if (strcmp(req->path, "/api/onebot") == 0 && strcmp(req->method, "POST") == 0) {
         handle_onebot_webhook(app, fd, req);
+        return;
+    }
+    if (strcmp(req->path, "/api/hamalert") == 0 &&
+        (strcmp(req->method, "POST") == 0 || strcmp(req->method, "GET") == 0)) {
+        char response[256];
+        int status = hamalert_handle_webhook(app, req->query, req->body, req->content_type, response, sizeof(response));
+        if (status == 403) {
+            send_response(fd, "403 Forbidden", "application/json", response);
+        } else if (status == 202) {
+            send_response(fd, "202 Accepted", "application/json", response);
+        } else if (status >= 400) {
+            send_response(fd, "400 Bad Request", "application/json", response);
+        } else {
+            send_response(fd, "200 OK", "application/json", response);
+        }
         return;
     }
 

@@ -127,6 +127,7 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&app->cache_mutex, NULL);
     pthread_mutex_init(&app->refresh_mutex, NULL);
     pthread_mutex_init(&app->spot_mutex, NULL);
+    pthread_mutex_init(&app->hamalert_mutex, NULL);
     pthread_mutex_init(&app->rate_mutex, NULL);
     pthread_mutex_init(&app->async_mutex, NULL);
 
@@ -166,6 +167,10 @@ int main(int argc, char **argv) {
     app->last_sixm_alert_level = atoi(temp);
     storage_get_state(app, "last_6m_alert_at", temp, sizeof(temp));
     app->last_sixm_alert_at = (time_t)atoll(temp);
+    storage_get_state(app, "last_2m_alert_level", temp, sizeof(temp));
+    app->last_twom_alert_level = atoi(temp);
+    storage_get_state(app, "last_2m_alert_at", temp, sizeof(temp));
+    app->last_twom_alert_at = (time_t)atoll(temp);
 
     app_log(app, "INFO", "鏈嶅姟鍚姩锛屾暟鎹簱: %s", db_path);
     psk_start(app);
@@ -194,6 +199,7 @@ int main(int argc, char **argv) {
     pthread_mutex_destroy(&app->cache_mutex);
     pthread_mutex_destroy(&app->refresh_mutex);
     pthread_mutex_destroy(&app->spot_mutex);
+    pthread_mutex_destroy(&app->hamalert_mutex);
     pthread_mutex_destroy(&app->rate_mutex);
     pthread_mutex_destroy(&app->async_mutex);
     free(app);

@@ -76,6 +76,8 @@ typedef int app_socket_t;
 #define MAX_PASSES 32
 #define MAX_RATE_LIMITS 256
 #define MAX_TEMPLATE_NAME 64
+#define MAX_HAMALERT_EVENTS 512
+#define MAX_AWARD_NAME 128
 
 typedef struct {
     const char *name;
@@ -178,6 +180,14 @@ typedef struct {
     int sixm_alert_enabled;
     int sixm_alert_interval_minutes;
     int sixm_psk_trigger_spots;
+    int twom_alert_enabled;
+    int twom_alert_interval_minutes;
+    int twom_psk_trigger_spots;
+    int hamalert_enabled;
+    char hamalert_webhook_token[MAX_LARGE_TEXT];
+    int hamalert_match_ol;
+    int hamalert_use_for_6m;
+    int hamalert_use_for_2m;
 
     /* F5LEN / 天气 / 流星雨 / 卫星相关数据源参数 */
     char tropo_source_url[MAX_LARGE_TEXT];
@@ -209,9 +219,11 @@ typedef struct {
     /* QQ 机器人发出去的文本模板 */
     char report_template_full[MAX_TEMPLATE_TEXT];
     char report_template_6m[MAX_TEMPLATE_TEXT];
+    char report_template_2m[MAX_TEMPLATE_TEXT];
     char report_template_solar[MAX_TEMPLATE_TEXT];
     char report_template_geomag[MAX_TEMPLATE_TEXT];
     char report_template_open6m[MAX_TEMPLATE_TEXT];
+    char report_template_open2m[MAX_TEMPLATE_TEXT];
     char help_template[MAX_TEMPLATE_TEXT];
     char compact_template_hamqsl[MAX_TEMPLATE_TEXT];
     char compact_template_hamqsl_unavailable[MAX_TEMPLATE_TEXT];
@@ -226,13 +238,53 @@ typedef struct {
     char section_template_satellite[MAX_TEMPLATE_TEXT];
     char section_template_satellite_unavailable[MAX_TEMPLATE_TEXT];
     char section_template_6m[MAX_TEMPLATE_TEXT];
+    char section_template_2m[MAX_TEMPLATE_TEXT];
     char section_template_analysis[MAX_TEMPLATE_TEXT];
     char compact_template_hamqsl_image[MAX_TEMPLATE_TEXT];
     char report_template_pskmap[MAX_TEMPLATE_TEXT];
     char report_template_pskmap_failed[MAX_TEMPLATE_TEXT];
+    char wording_psk_assessment_open[MAX_TEXT];
+    char wording_psk_assessment_possible[MAX_TEXT];
+    char wording_psk_assessment_global_only[MAX_TEXT];
+    char wording_psk_assessment_quiet[MAX_TEXT];
+    char wording_psk_assessment_disconnected[MAX_TEXT];
+    char wording_psk_assessment_hamalert_open[MAX_TEXT];
+    char wording_psk_assessment_hamalert_hint[MAX_TEXT];
+    char wording_psk_confidence_high[MAX_TEXT];
+    char wording_psk_confidence_medium[MAX_TEXT];
+    char wording_psk_confidence_low[MAX_TEXT];
+    char wording_psk_confidence_unknown[MAX_TEXT];
+    char wording_alert_none[MAX_TEXT];
+    char wording_alert_info[MAX_TEXT];
+    char wording_alert_watch[MAX_TEXT];
+    char wording_alert_strong[MAX_TEXT];
+
+    /* Logbook / awards account center */
+    int lotw_enabled;
+    char lotw_login[MAX_TEXT];
+    char lotw_password[MAX_TEXT];
+    char lotw_station_callsign[MAX_TEXT];
+    int lotw_sync_interval_minutes;
+    int lotw_fetch_qso_enabled;
+    int lotw_fetch_qsl_enabled;
+    char clublog_callsign[MAX_TEXT];
+    char clublog_api_key[MAX_LARGE_TEXT];
+    char clublog_app_password[MAX_LARGE_TEXT];
+    char qrz_callsign[MAX_TEXT];
+    char qrz_logbook_api_key[MAX_LARGE_TEXT];
+    int award_recent_days;
+
+    /* Award / query templates */
+    char report_template_dxcc[MAX_TEMPLATE_TEXT];
+    char report_template_vucc[MAX_TEMPLATE_TEXT];
+    char report_template_qrz_award[MAX_TEMPLATE_TEXT];
+    char trigger_dxcc[MAX_HUGE_TEXT];
+    char trigger_vucc[MAX_HUGE_TEXT];
+    char trigger_qrz_award[MAX_HUGE_TEXT];
 
     char trigger_full[MAX_HUGE_TEXT];
     char trigger_6m[MAX_HUGE_TEXT];
+    char trigger_2m[MAX_HUGE_TEXT];
     char trigger_solar[MAX_HUGE_TEXT];
     char trigger_help[MAX_HUGE_TEXT];
     char trigger_pskmap[MAX_HUGE_TEXT];
@@ -302,6 +354,8 @@ typedef struct {
     int daily_precip_probability;
     int sixm_weather_score;
     char sixm_weather_level[MAX_TEXT];
+    int twom_weather_score;
+    char twom_weather_level[MAX_TEXT];
 } weather_data_t;
 
 typedef struct {
@@ -337,7 +391,28 @@ typedef struct {
     char confidence[MAX_TEXT];
     int score;
     char matched_grids[MAX_HUGE_TEXT];
+    int hamalert_hits_15m;
+    int hamalert_hits_60m;
+    char hamalert_latest_time[MAX_TEXT];
+    char hamalert_latest_text[MAX_LARGE_TEXT];
+    char hamalert_sources[MAX_HUGE_TEXT];
+    char hamalert_matched_grids[MAX_HUGE_TEXT];
+    char hamalert_matched_ols[MAX_HUGE_TEXT];
 } psk_summary_t;
+
+typedef struct {
+    int in_use;
+    time_t timestamp;
+    char band[MAX_SMALL_TEXT];
+    char source[MAX_TEXT];
+    char callsign[MAX_TEXT];
+    char spotter_call[MAX_TEXT];
+    char locator[MAX_TEXT];
+    char dx_locator[MAX_TEXT];
+    char spotter_locator[MAX_TEXT];
+    char mode[MAX_SMALL_TEXT];
+    char comment[MAX_LARGE_TEXT];
+} hamalert_event_t;
 
 typedef struct {
     int valid;
@@ -400,6 +475,7 @@ typedef struct {
     hamqsl_data_t hamqsl;
     weather_data_t weather;
     psk_summary_t psk;
+    psk_summary_t twom;
     tropo_data_t tropo;
     meteor_data_t meteor;
     satellite_summary_t satellite;
@@ -409,6 +485,7 @@ typedef struct {
     char section_weather[2048];
     char section_tropo[2048];
     char section_6m[4096];
+    char section_2m[4096];
     char section_solar[2048];
     char section_meteor[2048];
     char section_satellite[4096];
@@ -416,12 +493,57 @@ typedef struct {
 
     char report_text[MAX_REPORT_TEXT];
     char report_6m[MAX_REPORT_TEXT];
+    char report_2m[MAX_REPORT_TEXT];
     char report_solar[MAX_REPORT_TEXT];
     char report_geomag[MAX_REPORT_TEXT];
     char report_open6m[MAX_REPORT_TEXT];
+    char report_open2m[MAX_REPORT_TEXT];
     char report_help[MAX_REPORT_TEXT];
     char analysis_summary[2048];
 } snapshot_t;
+
+typedef struct {
+    int configured;
+    int enabled;
+    char callsign[MAX_TEXT];
+    char last_sync_at[MAX_TEXT];
+    char last_qso_cursor[MAX_TEXT];
+    char last_qsl_cursor[MAX_TEXT];
+    char last_status[MAX_TEXT];
+    char last_error[MAX_LARGE_TEXT];
+    int total_qsos;
+    int confirmed_qsos;
+} lotw_status_t;
+
+typedef struct {
+    int confirmed_total;
+    int confirmed_current;
+    int confirmed_deleted;
+    int recent_confirmed;
+    int unconfirmed_qsos;
+    int granted_credits;
+} dxcc_summary_t;
+
+typedef struct {
+    char band_key[MAX_SMALL_TEXT];
+    char band_label[MAX_TEXT];
+    int confirmed_grids;
+    int recent_grids;
+    int unconfirmed_qsos;
+    int threshold_basic;
+    int remaining_to_basic;
+} vucc_summary_t;
+
+typedef struct {
+    char award_key[MAX_TEXT];
+    char award_name[MAX_AWARD_NAME];
+    char continent[MAX_TEXT];
+    int threshold;
+    int credits;
+    int recent_credits;
+    int remaining;
+    int achieved;
+} qrz_award_summary_t;
 
 /* 每种数据源都有自己的下次轮询时间，互不影响。 */
 typedef struct {
@@ -445,6 +567,7 @@ typedef struct {
     pthread_mutex_t cache_mutex;
     pthread_mutex_t refresh_mutex;
     pthread_mutex_t spot_mutex;
+    pthread_mutex_t hamalert_mutex;
     pthread_mutex_t rate_mutex;
     pthread_mutex_t async_mutex;
 
@@ -455,6 +578,9 @@ typedef struct {
     psk_spot_t spots[MAX_SPOTS];
     size_t spot_head;
     size_t spot_count;
+    hamalert_event_t hamalert_events[MAX_HAMALERT_EVENTS];
+    size_t hamalert_head;
+    size_t hamalert_count;
     struct mosquitto *mosq;
     int mqtt_connected;
 
@@ -466,10 +592,13 @@ typedef struct {
     poll_state_t satellite_poll;
     poll_state_t psk_eval_poll;
     poll_state_t snapshot_poll;
+    poll_state_t lotw_sync_poll;
 
     int last_geomag_alert_g;
     int last_sixm_alert_level;
     time_t last_sixm_alert_at;
+    int last_twom_alert_level;
+    time_t last_twom_alert_at;
 
     /* 机器人问答限流缓存 */
     rate_limit_entry_t rate_limits[MAX_RATE_LIMITS];
@@ -580,6 +709,14 @@ int fetch_tropo_data(const settings_t *settings, tropo_data_t *out);
 int fetch_meteor_data(const settings_t *settings, meteor_data_t *out);
 int fetch_satellite_data(const settings_t *settings, satellite_summary_t *out, app_t *app);
 void build_reports(app_t *app, snapshot_t *snapshot);
+const char *sixm_alert_label_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+const char *twom_alert_label_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+const char *sixm_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+const char *twom_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+int sixm_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+int twom_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings);
+const char *psk_assessment_code_from_summary(const psk_summary_t *summary);
+const char *psk_confidence_code_from_summary(const psk_summary_t *summary);
 int refresh_snapshot(app_t *app, int force);
 int onebot_send_message(app_t *app, target_type_t type, const char *target_id, const char *message);
 int send_report_to_all_targets(app_t *app, const char *message);
@@ -593,12 +730,30 @@ void app_check_alerts(app_t *app);
 int app_rate_limit_allow(app_t *app, const char *key);
 const char *app_get_report_by_kind(const snapshot_t *snapshot, const char *kind);
 
+/* awards.c：LoTW sync, local award calculations, and award query replies */
+int awards_sync_lotw(app_t *app, int force_full);
+int awards_render_query_reply(app_t *app, const char *message, char *out, size_t out_len);
+int awards_load_lotw_status(app_t *app, lotw_status_t *out);
+int awards_load_dxcc_summary(app_t *app, dxcc_summary_t *out);
+int awards_load_vucc_summary(app_t *app, const char *band_key, vucc_summary_t *out);
+int awards_load_qrz_summary(app_t *app, const char *award_name, qrz_award_summary_t *out);
+void awards_render_dashboard_html(app_t *app, sb_t *html);
+int awards_append_template_help(sb_t *sb);
+
 /* psk.c：PSKReporter MQTT 接入与 6m 摘要分析 */
 int psk_start(app_t *app);
 void psk_stop(app_t *app);
 void psk_compute_summary(app_t *app, const settings_t *settings, psk_summary_t *out);
+void psk_compute_summary_for_band(app_t *app, const settings_t *settings, const char *band, psk_summary_t *out);
 void psk_append_recent_rows(app_t *app, sb_t *rows, const settings_t *settings, int max_rows);
+void psk_append_recent_rows_for_band(app_t *app, sb_t *rows, const settings_t *settings, const char *band, int max_rows);
 int psk_send_snapshot_image(app_t *app, target_type_t type, const char *target_id);
+int psk_send_snapshot_image_for_band(app_t *app, target_type_t type, const char *target_id, const char *band);
+int psk_render_snapshot_png_for_band(app_t *app, const char *band, unsigned char **png_data, size_t *png_size,
+                                     char *detail, size_t detail_len);
+int hamalert_handle_webhook(app_t *app, const char *query, const char *body, const char *content_type,
+                            char *response, size_t response_len);
+void hamalert_apply_to_summary(app_t *app, const settings_t *settings, const char *band, psk_summary_t *summary);
 
 /* http_server.c：内置后台 */
 int http_server_run(app_t *app);

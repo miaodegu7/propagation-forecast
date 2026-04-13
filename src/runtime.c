@@ -315,22 +315,63 @@ static int geomag_g_from_k_runtime(int kindex) {
 static int sixm_alert_level(const snapshot_t *snapshot, const settings_t *settings) {
     /* 6m 告警等级来自三类信息的组合：
      * 1. 本地 PSKReporter 实测
-     * 2. F5LEN 对流层条件
-     * 3. 天气侧面对 6m 的辅助评分
+     * 2. HamAlert 对相关网格的辅助确认
+     * 3. F5LEN 对流层条件
+     * 4. 天气侧面对 6m 的辅助评分
      *
      * PSK 实测优先级最高，因为它最接近“已经开口”的事实。 */
     int psk_hot = snapshot->psk.local_spots_15m >= settings->sixm_psk_trigger_spots ||
         snapshot->psk.local_spots_60m >= settings->sixm_psk_trigger_spots;
     int psk_some = snapshot->psk.local_spots_60m > 0;
+    int hamalert_hot = snapshot->psk.hamalert_hits_15m >= settings->sixm_psk_trigger_spots ||
+        snapshot->psk.hamalert_hits_60m >= settings->sixm_psk_trigger_spots;
+    int hamalert_some = snapshot->psk.hamalert_hits_60m > 0;
     int tropo_hot = snapshot->tropo.valid && snapshot->tropo.score >= 78;
     int tropo_some = snapshot->tropo.valid && snapshot->tropo.score >= 55;
     int weather_hot = snapshot->weather.valid && snapshot->weather.sixm_weather_score >= 70;
     int weather_some = snapshot->weather.valid && snapshot->weather.sixm_weather_score >= 50;
 
-    if (psk_hot && (tropo_some || weather_some)) return 3;
-    if (psk_hot || (psk_some && (tropo_some || weather_some)) || (tropo_hot && weather_hot)) return 2;
-    if (psk_some || tropo_some || weather_some) return 1;
+    if ((psk_hot || hamalert_hot) && (tropo_some || weather_some || psk_some)) return 3;
+    if (psk_hot || hamalert_hot || ((psk_some || hamalert_some) && (tropo_some || weather_some)) ||
+        (tropo_hot && weather_hot)) return 2;
+    if (psk_some || hamalert_some || tropo_some || weather_some) return 1;
     return 0;
+}
+
+static int twom_alert_level(const snapshot_t *snapshot, const settings_t *settings) {
+    /* 2m 更偏向对流层传播，所以 Tropo 和天气的权重比 6m 更高；
+     * 但一旦 PSK/HamAlert 有本地相关报告，仍然优先视作“实测证据”。 */
+    int psk_hot = snapshot->twom.local_spots_15m >= settings->twom_psk_trigger_spots ||
+        snapshot->twom.local_spots_60m >= settings->twom_psk_trigger_spots;
+    int psk_some = snapshot->twom.local_spots_60m > 0;
+    int hamalert_hot = snapshot->twom.hamalert_hits_15m >= settings->twom_psk_trigger_spots ||
+        snapshot->twom.hamalert_hits_60m >= settings->twom_psk_trigger_spots;
+    int hamalert_some = snapshot->twom.hamalert_hits_60m > 0;
+    int tropo_hot = snapshot->tropo.valid && snapshot->tropo.score >= 68;
+    int tropo_some = snapshot->tropo.valid && snapshot->tropo.score >= 52;
+    int weather_hot = snapshot->weather.valid && snapshot->weather.twom_weather_score >= 70;
+    int weather_some = snapshot->weather.valid && snapshot->weather.twom_weather_score >= 50;
+
+    if (psk_hot || hamalert_hot) {
+        return (tropo_some || weather_some) ? 3 : 2;
+    }
+    if ((psk_some || hamalert_some) && (tropo_some || weather_some)) {
+        return 2;
+    }
+    if ((tropo_hot && weather_hot) || tropo_hot) {
+        return 2;
+    }
+    if (psk_some || hamalert_some || tropo_some || weather_some) {
+        return 1;
+    }
+    return 0;
+}
+
+static void compute_band_summaries(app_t *app, const settings_t *settings, snapshot_t *snapshot) {
+    psk_compute_summary_for_band(app, settings, "6m", &snapshot->psk);
+    hamalert_apply_to_summary(app, settings, "6m", &snapshot->psk);
+    psk_compute_summary_for_band(app, settings, "2m", &snapshot->twom);
+    hamalert_apply_to_summary(app, settings, "2m", &snapshot->twom);
 }
 
 static const char *meteor_fetch_status(const settings_t *settings, const meteor_data_t *meteor, int rc) {
@@ -424,11 +465,16 @@ static void *async_refresh_thread(void *arg) {
     time_t now = time(NULL);
 
     if (reset_schedule && rc == 0) {
-        settings_t settings;
+        settings_t *settings = calloc(1, sizeof(*settings));
         pthread_mutex_lock(&app->cache_mutex);
-        settings = app->settings;
+        if (settings) {
+            *settings = app->settings;
+        }
         pthread_mutex_unlock(&app->cache_mutex);
-        app_reset_poll_schedule(app, &settings, now);
+        if (settings) {
+            app_reset_poll_schedule(app, settings, now);
+            free(settings);
+        }
     }
 
     pthread_mutex_lock(&app->async_mutex);
@@ -490,9 +536,11 @@ const char *app_get_report_by_kind(const snapshot_t *snapshot, const char *kind)
      * 根据 kind 选择要发送哪一段报告。 */
     if (!kind || !*kind || strcmp(kind, "full") == 0) return snapshot->report_text;
     if (strcmp(kind, "6m") == 0) return snapshot->report_6m;
+    if (strcmp(kind, "2m") == 0) return snapshot->report_2m;
     if (strcmp(kind, "solar") == 0) return snapshot->report_solar;
     if (strcmp(kind, "geomag") == 0) return snapshot->report_geomag;
     if (strcmp(kind, "open6m") == 0) return snapshot->report_open6m;
+    if (strcmp(kind, "open2m") == 0) return snapshot->report_open2m;
     if (strcmp(kind, "help") == 0) return snapshot->report_help;
     return snapshot->report_text;
 }
@@ -625,12 +673,14 @@ int send_report_to_all_targets(app_t *app, const char *message) {
 int send_report_kind_to_all_targets(app_t *app, const char *report_kind) {
     /* 发送前先让缓存进入“尽可能新”的状态。
      * 非 force 模式会优先走周期抓取逻辑，而不是每次都全量重抓。 */
-    if (report_kind && strcmp(report_kind, "pskmap") == 0) {
+    if (report_kind &&
+        (strcmp(report_kind, "pskmap") == 0 || strcmp(report_kind, "pskmap6m") == 0 || strcmp(report_kind, "pskmap2m") == 0)) {
         target_t targets[MAX_TARGETS];
         int count = 0;
         int sent = 0;
         int failed = 0;
         settings_t settings;
+        const char *band = (strcmp(report_kind, "pskmap2m") == 0) ? "2m" : "6m";
 
         pthread_mutex_lock(&app->cache_mutex);
         settings = app->settings;
@@ -641,7 +691,7 @@ int send_report_kind_to_all_targets(app_t *app, const char *report_kind) {
             if (!targets[i].enabled) {
                 continue;
             }
-            if (psk_send_snapshot_image(app, targets[i].type, targets[i].target_id) == 0) {
+            if (psk_send_snapshot_image_for_band(app, targets[i].type, targets[i].target_id, band) == 0) {
                 sent++;
             } else {
                 failed++;
@@ -650,7 +700,7 @@ int send_report_kind_to_all_targets(app_t *app, const char *report_kind) {
                 app_sleep_ms(settings.onebot_send_delay_ms);
             }
         }
-        app_log(app, failed ? "WARN" : "INFO", "PSKReporter 快照群发完成: success=%d failed=%d", sent, failed);
+        app_log(app, failed ? "WARN" : "INFO", "PSKReporter %s 快照群发完成: success=%d failed=%d", band, sent, failed);
         return sent > 0 ? sent : -1;
     }
 
@@ -666,37 +716,51 @@ void app_rebuild_snapshot(app_t *app) {
      * 例如 PSK 摘要、模板渲染、分析文本。
      * 它不会主动联网。 */
     pthread_mutex_lock(&app->refresh_mutex);
-    settings_t settings;
-    storage_load_settings(app, &settings);
-    apply_timezone(settings.timezone);
-
-    snapshot_t next_snapshot;
-    pthread_mutex_lock(&app->cache_mutex);
-    next_snapshot = app->snapshot;
-    app->settings = settings;
-    pthread_mutex_unlock(&app->cache_mutex);
-
-    psk_compute_summary(app, &settings, &next_snapshot.psk);
-    next_snapshot.refreshed_at = time(NULL);
-    build_reports(app, &next_snapshot);
+    settings_t *settings = calloc(1, sizeof(*settings));
+    snapshot_t *next_snapshot = calloc(1, sizeof(*next_snapshot));
+    if (!settings || !next_snapshot) {
+        free(settings);
+        free(next_snapshot);
+        pthread_mutex_unlock(&app->refresh_mutex);
+        return;
+    }
+    storage_load_settings(app, settings);
+    apply_timezone(settings->timezone);
 
     pthread_mutex_lock(&app->cache_mutex);
-    app->snapshot = next_snapshot;
+    *next_snapshot = app->snapshot;
+    app->settings = *settings;
     pthread_mutex_unlock(&app->cache_mutex);
+
+    compute_band_summaries(app, settings, next_snapshot);
+    next_snapshot->refreshed_at = time(NULL);
+    build_reports(app, next_snapshot);
+
+    pthread_mutex_lock(&app->cache_mutex);
+    app->snapshot = *next_snapshot;
+    pthread_mutex_unlock(&app->cache_mutex);
+    free(settings);
+    free(next_snapshot);
     pthread_mutex_unlock(&app->refresh_mutex);
 }
 
 int app_force_refresh(app_t *app) {
     /* force_refresh 是最重的刷新路径，会主动访问所有外部源。 */
     pthread_mutex_lock(&app->refresh_mutex);
-    settings_t settings;
-    storage_load_settings(app, &settings);
-    apply_timezone(settings.timezone);
+    settings_t *settings = calloc(1, sizeof(*settings));
+    snapshot_t *next_snapshot = calloc(1, sizeof(*next_snapshot));
+    if (!settings || !next_snapshot) {
+        free(settings);
+        free(next_snapshot);
+        pthread_mutex_unlock(&app->refresh_mutex);
+        return -1;
+    }
+    storage_load_settings(app, settings);
+    apply_timezone(settings->timezone);
 
-    snapshot_t next_snapshot;
     pthread_mutex_lock(&app->cache_mutex);
-    next_snapshot = app->snapshot;
-    app->settings = settings;
+    *next_snapshot = app->snapshot;
+    app->settings = *settings;
     pthread_mutex_unlock(&app->cache_mutex);
 
     hamqsl_data_t ham;
@@ -706,23 +770,23 @@ int app_force_refresh(app_t *app) {
     satellite_summary_t satellite;
 
     int ham_rc = fetch_hamqsl_data(&ham);
-    int weather_rc = fetch_weather_data(&settings, &weather);
-    int tropo_rc = fetch_tropo_data(&settings, &tropo);
-    int meteor_rc = fetch_meteor_data(&settings, &meteor);
-    int satellite_rc = fetch_satellite_data(&settings, &satellite, app);
+    int weather_rc = fetch_weather_data(settings, &weather);
+    int tropo_rc = fetch_tropo_data(settings, &tropo);
+    int meteor_rc = fetch_meteor_data(settings, &meteor);
+    int satellite_rc = fetch_satellite_data(settings, &satellite, app);
 
-    if (ham_rc == 0) next_snapshot.hamqsl = ham;
-    if (weather_rc == 0) next_snapshot.weather = weather;
-    if (tropo_rc == 0) next_snapshot.tropo = tropo;
-    if (meteor_rc == 0) next_snapshot.meteor = meteor;
-    if (satellite_rc == 0) next_snapshot.satellite = satellite;
+    if (ham_rc == 0) next_snapshot->hamqsl = ham;
+    if (weather_rc == 0) next_snapshot->weather = weather;
+    if (tropo_rc == 0) next_snapshot->tropo = tropo;
+    if (meteor_rc == 0) next_snapshot->meteor = meteor;
+    if (satellite_rc == 0) next_snapshot->satellite = satellite;
 
-    psk_compute_summary(app, &settings, &next_snapshot.psk);
-    next_snapshot.refreshed_at = time(NULL);
-    build_reports(app, &next_snapshot);
+    compute_band_summaries(app, settings, next_snapshot);
+    next_snapshot->refreshed_at = time(NULL);
+    build_reports(app, next_snapshot);
 
     pthread_mutex_lock(&app->cache_mutex);
-    app->snapshot = next_snapshot;
+    app->snapshot = *next_snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
 
     app_log(app, "INFO",
@@ -730,10 +794,12 @@ int app_force_refresh(app_t *app) {
         ham_rc == 0 ? "ok" : "fail",
         weather_rc == 0 ? "ok" : "fail",
         tropo_rc == 0 ? "ok" : "fail",
-        meteor_fetch_status(&settings, &meteor, meteor_rc),
-        satellite_fetch_status(&settings, &satellite, satellite_rc),
-        next_snapshot.psk.local_spots_60m);
+        meteor_fetch_status(settings, &meteor, meteor_rc),
+        satellite_fetch_status(settings, &satellite, satellite_rc),
+        next_snapshot->psk.local_spots_60m);
 
+    free(settings);
+    free(next_snapshot);
     pthread_mutex_unlock(&app->refresh_mutex);
     return 0;
 }
@@ -749,14 +815,20 @@ void app_run_periodic_fetches(app_t *app) {
     }
 
     pthread_mutex_lock(&app->refresh_mutex);
-    settings_t settings;
-    storage_load_settings(app, &settings);
-    apply_timezone(settings.timezone);
+    settings_t *settings = calloc(1, sizeof(*settings));
+    snapshot_t *next_snapshot = calloc(1, sizeof(*next_snapshot));
+    if (!settings || !next_snapshot) {
+        free(settings);
+        free(next_snapshot);
+        pthread_mutex_unlock(&app->refresh_mutex);
+        return;
+    }
+    storage_load_settings(app, settings);
+    apply_timezone(settings->timezone);
 
-    snapshot_t next_snapshot;
     pthread_mutex_lock(&app->cache_mutex);
-    next_snapshot = app->snapshot;
-    app->settings = settings;
+    *next_snapshot = app->snapshot;
+    app->settings = *settings;
     pthread_mutex_unlock(&app->cache_mutex);
 
     time_t now = time(NULL);
@@ -765,78 +837,92 @@ void app_run_periodic_fetches(app_t *app) {
 
     /* 各源独立轮询，互不绑死。
      * 例如天气接口慢了，不会影响 HAMqsl 或 PSK 的更新频率。 */
-    if (poll_due(&app->hamqsl_poll, settings.hamqsl_interval_minutes * 60, now)) {
+    if (poll_due(&app->hamqsl_poll, settings->hamqsl_interval_minutes * 60, now)) {
         hamqsl_data_t ham;
         if (fetch_hamqsl_data(&ham) == 0) {
-            next_snapshot.hamqsl = ham;
+            next_snapshot->hamqsl = ham;
             changed = 1;
         }
         mark_poll_done(&app->hamqsl_poll, now);
     }
-    if (poll_due(&app->weather_poll, settings.weather_interval_minutes * 60, now)) {
+    if (poll_due(&app->weather_poll, settings->weather_interval_minutes * 60, now)) {
         weather_data_t weather;
-        if (fetch_weather_data(&settings, &weather) == 0) {
-            next_snapshot.weather = weather;
+        if (fetch_weather_data(settings, &weather) == 0) {
+            next_snapshot->weather = weather;
             changed = 1;
         }
         mark_poll_done(&app->weather_poll, now);
     }
-    if (poll_due(&app->tropo_poll, settings.tropo_interval_minutes * 60, now)) {
+    if (poll_due(&app->tropo_poll, settings->tropo_interval_minutes * 60, now)) {
         tropo_data_t tropo;
-        if (fetch_tropo_data(&settings, &tropo) == 0) {
-            next_snapshot.tropo = tropo;
+        if (fetch_tropo_data(settings, &tropo) == 0) {
+            next_snapshot->tropo = tropo;
             changed = 1;
         }
         mark_poll_done(&app->tropo_poll, now);
     }
-    if (poll_due(&app->meteor_poll, settings.meteor_interval_hours * 3600, now)) {
+    if (poll_due(&app->meteor_poll, settings->meteor_interval_hours * 3600, now)) {
         meteor_data_t meteor;
-        if (fetch_meteor_data(&settings, &meteor) == 0) {
-            next_snapshot.meteor = meteor;
+        if (fetch_meteor_data(settings, &meteor) == 0) {
+            next_snapshot->meteor = meteor;
             changed = 1;
         }
         mark_poll_done(&app->meteor_poll, now);
     }
-    if (poll_due(&app->satellite_poll, settings.satellite_interval_hours * 3600, now)) {
+    if (poll_due(&app->satellite_poll, settings->satellite_interval_hours * 3600, now)) {
         satellite_summary_t satellite;
-        if (fetch_satellite_data(&settings, &satellite, app) == 0) {
-            next_snapshot.satellite = satellite;
+        if (fetch_satellite_data(settings, &satellite, app) == 0) {
+            next_snapshot->satellite = satellite;
             changed = 1;
         }
         mark_poll_done(&app->satellite_poll, now);
     }
-    if (poll_due(&app->psk_eval_poll, settings.psk_eval_interval_seconds, now)) {
-        psk_compute_summary(app, &settings, &next_snapshot.psk);
+    if (poll_due(&app->lotw_sync_poll, settings->lotw_sync_interval_minutes * 60, now)) {
+        if (settings->lotw_enabled) {
+            awards_sync_lotw(app, 0);
+        }
+        mark_poll_done(&app->lotw_sync_poll, now);
+    }
+    if (poll_due(&app->psk_eval_poll, settings->psk_eval_interval_seconds, now)) {
+        compute_band_summaries(app, settings, next_snapshot);
         mark_poll_done(&app->psk_eval_poll, now);
         changed = 1;
         psk_changed = 1;
     }
-    if (changed || poll_due(&app->snapshot_poll, settings.snapshot_rebuild_seconds, now)) {
+    if (changed || poll_due(&app->snapshot_poll, settings->snapshot_rebuild_seconds, now)) {
         /* 只要任意源有变化，或模板重建周期到了，就统一刷新最终 snapshot。 */
         if (!psk_changed) {
-            psk_compute_summary(app, &settings, &next_snapshot.psk);
+            compute_band_summaries(app, settings, next_snapshot);
         }
-        next_snapshot.refreshed_at = now;
-        build_reports(app, &next_snapshot);
+        next_snapshot->refreshed_at = now;
+        build_reports(app, next_snapshot);
         mark_poll_done(&app->snapshot_poll, now);
         pthread_mutex_lock(&app->cache_mutex);
-        app->snapshot = next_snapshot;
+        app->snapshot = *next_snapshot;
         pthread_mutex_unlock(&app->cache_mutex);
     }
 
+    free(settings);
+    free(next_snapshot);
     pthread_mutex_unlock(&app->refresh_mutex);
 }
 
 void app_check_alerts(app_t *app) {
     /* 告警状态会落到数据库里，所以程序重启后不会丢失“上次已经发到哪一级”。 */
-    settings_t settings;
-    snapshot_t snapshot;
+    settings_t *settings = calloc(1, sizeof(*settings));
+    snapshot_t *snapshot = calloc(1, sizeof(*snapshot));
+    if (!settings || !snapshot) {
+        free(settings);
+        free(snapshot);
+        return;
+    }
     pthread_mutex_lock(&app->cache_mutex);
-    settings = app->settings;
-    snapshot = app->snapshot;
+    *settings = app->settings;
+    *snapshot = app->snapshot;
     pthread_mutex_unlock(&app->cache_mutex);
 
-    if (app->last_geomag_alert_g == 0 && app->last_sixm_alert_level == 0 && app->last_sixm_alert_at == 0) {
+    if (app->last_geomag_alert_g == 0 && app->last_sixm_alert_level == 0 &&
+        app->last_sixm_alert_at == 0 && app->last_twom_alert_level == 0 && app->last_twom_alert_at == 0) {
         char temp[64];
         storage_get_state(app, "last_geomag_alert_g", temp, sizeof(temp));
         app->last_geomag_alert_g = atoi(temp);
@@ -844,13 +930,17 @@ void app_check_alerts(app_t *app) {
         app->last_sixm_alert_level = atoi(temp);
         storage_get_state(app, "last_6m_alert_at", temp, sizeof(temp));
         app->last_sixm_alert_at = (time_t)atoll(temp);
+        storage_get_state(app, "last_2m_alert_level", temp, sizeof(temp));
+        app->last_twom_alert_level = atoi(temp);
+        storage_get_state(app, "last_2m_alert_at", temp, sizeof(temp));
+        app->last_twom_alert_at = (time_t)atoll(temp);
     }
 
-    int current_g = geomag_g_from_k_runtime(snapshot.hamqsl.kindex);
-    if (settings.geomag_alert_enabled && current_g >= settings.geomag_alert_threshold_g) {
+    int current_g = geomag_g_from_k_runtime(snapshot->hamqsl.kindex);
+    if (settings->geomag_alert_enabled && current_g >= settings->geomag_alert_threshold_g) {
         /* 地磁告警只在等级“首次达到/继续升级”时发送一次。 */
-        if (current_g > app->last_geomag_alert_g && snapshot.report_geomag[0]) {
-            send_report_to_all_targets(app, snapshot.report_geomag);
+        if (current_g > app->last_geomag_alert_g && snapshot->report_geomag[0]) {
+            send_report_to_all_targets(app, snapshot->report_geomag);
             char temp[32];
             snprintf(temp, sizeof(temp), "%d", current_g);
             storage_set_state(app, "last_geomag_alert_g", temp);
@@ -861,14 +951,14 @@ void app_check_alerts(app_t *app) {
         app->last_geomag_alert_g = 0;
     }
 
-    int level = sixm_alert_level(&snapshot, &settings);
+    int level = sixm_alert_level(snapshot, settings);
     time_t now = time(NULL);
-    if (settings.sixm_alert_enabled && level > 0) {
+    if (settings->sixm_alert_enabled && level > 0) {
         /* 6m 告警既支持“等级升级立即发”，也支持“同等级按最小间隔重复提醒”。 */
         if (level > app->last_sixm_alert_level ||
-            difftime(now, app->last_sixm_alert_at) >= settings.sixm_alert_interval_minutes * 60) {
-            if (snapshot.report_open6m[0]) {
-                send_report_to_all_targets(app, snapshot.report_open6m);
+            difftime(now, app->last_sixm_alert_at) >= settings->sixm_alert_interval_minutes * 60) {
+            if (snapshot->report_open6m[0]) {
+                send_report_to_all_targets(app, snapshot->report_open6m);
                 char temp[32];
                 snprintf(temp, sizeof(temp), "%d", level);
                 storage_set_state(app, "last_6m_alert_level", temp);
@@ -884,6 +974,30 @@ void app_check_alerts(app_t *app) {
         app->last_sixm_alert_level = 0;
         app->last_sixm_alert_at = 0;
     }
+
+    level = twom_alert_level(snapshot, settings);
+    if (settings->twom_alert_enabled && level > 0) {
+        if (level > app->last_twom_alert_level ||
+            difftime(now, app->last_twom_alert_at) >= settings->twom_alert_interval_minutes * 60) {
+            if (snapshot->report_open2m[0]) {
+                send_report_to_all_targets(app, snapshot->report_open2m);
+                char temp[32];
+                snprintf(temp, sizeof(temp), "%d", level);
+                storage_set_state(app, "last_2m_alert_level", temp);
+                snprintf(temp, sizeof(temp), "%lld", (long long)now);
+                storage_set_state(app, "last_2m_alert_at", temp);
+                app->last_twom_alert_level = level;
+                app->last_twom_alert_at = now;
+            }
+        }
+    } else if (app->last_twom_alert_level != 0 || app->last_twom_alert_at != 0) {
+        storage_set_state(app, "last_2m_alert_level", "0");
+        storage_set_state(app, "last_2m_alert_at", "0");
+        app->last_twom_alert_level = 0;
+        app->last_twom_alert_at = 0;
+    }
+    free(settings);
+    free(snapshot);
 }
 
 int app_rate_limit_allow(app_t *app, const char *key) {

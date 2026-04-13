@@ -118,6 +118,14 @@ static int seed_defaults(sqlite3 *db) {
         {"sixm_alert_enabled", "1"},
         {"sixm_alert_interval_minutes", "30"},
         {"sixm_psk_trigger_spots", "2"},
+        {"twom_alert_enabled", "1"},
+        {"twom_alert_interval_minutes", "30"},
+        {"twom_psk_trigger_spots", "1"},
+        {"hamalert_enabled", "0"},
+        {"hamalert_webhook_token", "change-me-hamalert"},
+        {"hamalert_match_ol", "1"},
+        {"hamalert_use_for_6m", "1"},
+        {"hamalert_use_for_2m", "1"},
         {"tropo_source_url", "https://tropo.f5len.org/asia/"},
         {"tropo_forecast_hours", "24"},
         {"tropo_send_image", "1"},
@@ -144,14 +152,18 @@ static int seed_defaults(sqlite3 *db) {
             "{{section_hamqsl}}\n{{section_meteor}}\n{{section_sources}}"},
         {"report_template_6m",
             "{{bot_name}} 6米传播提醒\n{{section_tropo}}\n{{section_weather}}\n{{section_6m}}\n{{section_satellite}}\n{{section_sources}}"},
+        {"report_template_2m",
+            "{{bot_name}} 2米传播提醒\n{{section_tropo}}\n{{section_weather}}\n{{section_2m}}\n{{section_sources}}"},
         {"report_template_solar",
             "{{bot_name}} 太阳与空间天气\n{{section_solar}}\n{{section_hamqsl}}\n{{section_sources}}"},
         {"report_template_geomag",
             "{{bot_name}} 地磁告警\n当前达到 G{{geomag_g}} 级，K={{ham_kindex}}，A={{ham_aindex}}，地磁状态：{{ham_geomagfield}}。请注意高频与极光相关传播变化。\n{{section_sources}}"},
         {"report_template_open6m",
             "{{bot_name}} 6米开口提醒\n级别：{{sixm_alert_level}}\n{{section_tropo}}\n{{section_weather}}\n{{section_6m}}\n{{section_sources}}"},
+        {"report_template_open2m",
+            "{{bot_name}} 2米开口提醒\n级别：{{twom_alert_level}}\n{{section_tropo}}\n{{section_weather}}\n{{section_2m}}\n{{section_sources}}"},
         {"help_template",
-            "可用关键词：传播 / 6米 / 太阳 / PSK图 / 帮助\n"
+            "可用关键词：传播 / 6米 / 2米 / 太阳 / PSK图 / DXCC / 50VUCC / 144VUCC / QRZ亚洲硕士 / 帮助\n"
             "当前机器人：{{bot_name}}\n"
             "台站：{{station_name}} {{station_grid}}\n"
             "PSK监控网格：{{psk_grids}}"},
@@ -166,8 +178,61 @@ static int seed_defaults(sqlite3 *db) {
             "倒计时：{{countdown_text}}"},
         {"compact_template_hamqsl_image",
             "HAMqsl 日图：[CQ:image,file={{hamqsl_widget_url}}]"},
+        {"wording_psk_assessment_open", "明显开口"},
+        {"wording_psk_assessment_possible", "有开口迹象"},
+        {"wording_psk_assessment_global_only", "全球活跃，本地待观察"},
+        {"wording_psk_assessment_quiet", "暂未见本地开口"},
+        {"wording_psk_assessment_disconnected", "实时数据未连接"},
+        {"wording_psk_assessment_hamalert_open", "HamAlert 有相关开口报告"},
+        {"wording_psk_assessment_hamalert_hint", "HamAlert 有相关线索"},
+        {"wording_psk_confidence_high", "高"},
+        {"wording_psk_confidence_medium", "中"},
+        {"wording_psk_confidence_low", "低"},
+        {"wording_psk_confidence_unknown", "未知"},
+        {"wording_alert_none", "暂无提醒"},
+        {"wording_alert_info", "一般提醒"},
+        {"wording_alert_watch", "重点观察"},
+        {"wording_alert_strong", "强提醒"},
+        {"lotw_enabled", "0"},
+        {"lotw_login", ""},
+        {"lotw_password", ""},
+        {"lotw_station_callsign", ""},
+        {"lotw_sync_interval_minutes", "180"},
+        {"lotw_fetch_qso_enabled", "1"},
+        {"lotw_fetch_qsl_enabled", "1"},
+        {"clublog_callsign", ""},
+        {"clublog_api_key", ""},
+        {"clublog_app_password", ""},
+        {"qrz_callsign", ""},
+        {"qrz_logbook_api_key", ""},
+        {"award_recent_days", "30"},
+        {"report_template_dxcc",
+            "{{lotw_callsign}} DXCC 统计\n"
+            "已确认实体：{{dxcc_confirmed_total}}（Current {{dxcc_confirmed_current}} / Deleted {{dxcc_confirmed_deleted}}）\n"
+            "已授予积分：{{dxcc_granted_credits}}\n"
+            "未确认 QSO：{{dxcc_unconfirmed_qsos}}\n"
+            "近 {{award_recent_days}} 天新确认实体：{{dxcc_recent_confirmed}}\n"
+            "LoTW 最近同步：{{lotw_last_sync}}（{{lotw_status}}）"},
+        {"report_template_vucc",
+            "{{lotw_callsign}} {{vucc_band_label}} VUCC\n"
+            "已确认网格：{{vucc_confirmed_grids}}\n"
+            "距离基础奖 100 格：{{vucc_remaining_to_basic}}\n"
+            "近 {{award_recent_days}} 天新网格：{{vucc_recent_grids}}\n"
+            "未确认 QSO：{{vucc_unconfirmed_qsos}}\n"
+            "LoTW 最近同步：{{lotw_last_sync}}（{{lotw_status}}）"},
+        {"report_template_qrz_award",
+            "{{lotw_callsign}} QRZ {{qrz_award_name}}\n"
+            "本地估算积分：{{qrz_credits}} / {{qrz_threshold}}\n"
+            "状态：{{qrz_status}}\n"
+            "还差：{{qrz_remaining}}\n"
+            "近 {{award_recent_days}} 天新增：{{qrz_recent_credits}}\n"
+            "说明：当前按 LoTW 已确认记录做本地规则估算，官方审核结果以 QRZ 为准。"},
+        {"trigger_dxcc", "DXCC,dxcc"},
+        {"trigger_vucc", "VUCC,vucc"},
+        {"trigger_qrz_award", "QRZ,qrz,亚洲硕士,亚洲大师,欧洲硕士,欧洲大师,非洲硕士,北美硕士,大洋洲硕士,南美硕士"},
         {"trigger_full", "传播,预报,简报"},
         {"trigger_6m", "6m,6米,六米"},
+        {"trigger_2m", "2m,2米,二米"},
         {"trigger_solar", "太阳,磁暴,空间天气"},
         {"trigger_help", "帮助,help,菜单"},
         {"trigger_pskmap", "PSK图,PSK地图,pskreporter,spot图"}
@@ -194,9 +259,11 @@ static int seed_defaults(sqlite3 *db) {
     upsert_default(db, "section_template_satellite", "{{satellite_summary}}");
     upsert_default(db, "section_template_satellite_unavailable", "卫星星历暂不可用。");
     upsert_default(db, "section_template_6m",
-        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\nHamAlert：15 分钟 {{psk_hamalert_hits_15m}} 条，60 分钟 {{psk_hamalert_hits_60m}} 条，最近一条 {{psk_hamalert_latest_text}} @ {{psk_hamalert_latest_time}}。\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+    upsert_default(db, "section_template_2m",
+        "PSKReporter：15 分钟本地 {{twom_local_spots_15m}} 条，60 分钟本地 {{twom_local_spots_60m}} 条，60 分钟全球 {{twom_global_spots_60m}} 条，判断 {{twom_assessment}}，置信度 {{twom_confidence}}，分值 {{twom_score}}/100。\nHamAlert：15 分钟 {{twom_hamalert_hits_15m}} 条，60 分钟 {{twom_hamalert_hits_60m}} 条，最近一条 {{twom_hamalert_latest_text}} @ {{twom_hamalert_latest_time}}。\n监控网格命中：{{twom_matched_grids}}\n最远相关路径：{{twom_farthest_peer}} {{twom_farthest_grid}}，约 {{twom_longest_path_km}} km。\n综合提醒级别：{{twom_alert_level}}。");
     upsert_default(db, "section_template_analysis",
-        "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
+        "太阳面：{{sun_summary}}\n6 米综合：PSK/HamAlert 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n2 米综合：PSK/HamAlert 判断“{{twom_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{twom_weather_level}}”，当前建议级别为“{{twom_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
     upsert_default(db, "report_template_pskmap",
         "PSKReporter 6m 快照\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}，判断：{{psk_assessment}}\n最新：{{psk_latest_pair}}\n{{pskmap_image_cq}}");
     upsert_default(db, "report_template_pskmap_failed",
@@ -219,7 +286,14 @@ static int seed_defaults(sqlite3 *db) {
         "VALUES(5, 'XW-2F', 40911, '线性', 0, '可按需启用');"
         "INSERT OR IGNORE INTO state(key, value) VALUES('last_geomag_alert_g', '0');"
         "INSERT OR IGNORE INTO state(key, value) VALUES('last_6m_alert_level', '0');"
-        "INSERT OR IGNORE INTO state(key, value) VALUES('last_6m_alert_at', '0');");
+        "INSERT OR IGNORE INTO state(key, value) VALUES('last_6m_alert_at', '0');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('last_2m_alert_level', '0');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('last_2m_alert_at', '0');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('lotw_last_qso_cursor', '');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('lotw_last_qsl_cursor', '');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('lotw_last_sync_at', '');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('lotw_last_status', '未同步');"
+        "INSERT OR IGNORE INTO state(key, value) VALUES('lotw_last_error', '');");
     return SQLITE_OK;
 }
 
@@ -286,7 +360,41 @@ int storage_init(app_t *app, const char *db_path) {
         " created_at TEXT NOT NULL,"
         " level TEXT NOT NULL,"
         " message TEXT NOT NULL"
-        ");");
+        ");"
+        "CREATE TABLE IF NOT EXISTS logbook_qsos ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " source TEXT NOT NULL DEFAULT 'lotw',"
+        " source_key TEXT NOT NULL UNIQUE,"
+        " station_callsign TEXT NOT NULL DEFAULT '',"
+        " owncall TEXT NOT NULL DEFAULT '',"
+        " call TEXT NOT NULL DEFAULT '',"
+        " qso_date TEXT NOT NULL DEFAULT '',"
+        " time_on TEXT NOT NULL DEFAULT '',"
+        " band TEXT NOT NULL DEFAULT '',"
+        " mode TEXT NOT NULL DEFAULT '',"
+        " mode_group TEXT NOT NULL DEFAULT '',"
+        " qso_timestamp TEXT NOT NULL DEFAULT '',"
+        " rxqso TEXT NOT NULL DEFAULT '',"
+        " qsl_rcvd TEXT NOT NULL DEFAULT '',"
+        " qslrdate TEXT NOT NULL DEFAULT '',"
+        " rxqsl TEXT NOT NULL DEFAULT '',"
+        " dxcc INTEGER NOT NULL DEFAULT 0,"
+        " dxcc_status TEXT NOT NULL DEFAULT '',"
+        " country TEXT NOT NULL DEFAULT '',"
+        " continent TEXT NOT NULL DEFAULT '',"
+        " gridsquare TEXT NOT NULL DEFAULT '',"
+        " vucc_grids TEXT NOT NULL DEFAULT '',"
+        " credit_granted TEXT NOT NULL DEFAULT '',"
+        " credit_submitted TEXT NOT NULL DEFAULT '',"
+        " raw_adif TEXT NOT NULL DEFAULT '',"
+        " imported_at TEXT NOT NULL DEFAULT '',"
+        " updated_at TEXT NOT NULL DEFAULT ''"
+        ");"
+        "CREATE INDEX IF NOT EXISTS idx_logbook_qsos_band ON logbook_qsos(band, qsl_rcvd);"
+        "CREATE INDEX IF NOT EXISTS idx_logbook_qsos_dxcc ON logbook_qsos(dxcc, qsl_rcvd);"
+        "CREATE INDEX IF NOT EXISTS idx_logbook_qsos_rxqsl ON logbook_qsos(rxqsl);"
+        "CREATE INDEX IF NOT EXISTS idx_logbook_qsos_station ON logbook_qsos(station_callsign);"
+        "CREATE INDEX IF NOT EXISTS idx_logbook_qsos_continent ON logbook_qsos(continent, qsl_rcvd);");
     if (rc != SQLITE_OK) {
         app_set_last_error(app, "数据库建表失败: %s", sqlite3_errmsg(app->db));
         sqlite3_close(app->db);
@@ -313,6 +421,19 @@ int storage_init(app_t *app, const char *db_path) {
             strcmp(template_value, legacy_template) == 0) {
             set_setting(app->db, "report_template_full", compact_template);
             set_setting(app->db, "include_source_urls", "0");
+        }
+
+        if (load_setting_text(app->db, "help_template", template_value, sizeof(template_value)) == SQLITE_OK &&
+            strcmp(template_value,
+                "可用关键词：传播 / 6米 / 2米 / 太阳 / PSK图 / 帮助\n"
+                "当前机器人：{{bot_name}}\n"
+                "台站：{{station_name}} {{station_grid}}\n"
+                "PSK监控网格：{{psk_grids}}") == 0) {
+            set_setting(app->db, "help_template",
+                "可用关键词：传播 / 6米 / 2米 / 太阳 / PSK图 / DXCC / 50VUCC / 144VUCC / QRZ亚洲硕士 / 帮助\n"
+                "当前机器人：{{bot_name}}\n"
+                "台站：{{station_name}} {{station_grid}}\n"
+                "PSK监控网格：{{psk_grids}}");
         }
 
         if (load_setting_text(app->db, "compact_template_hamqsl", template_value, sizeof(template_value)) != SQLITE_OK) {
@@ -384,6 +505,14 @@ int storage_load_settings(app_t *app, settings_t *out) {
     out->sixm_alert_enabled = load_int_or_default(app->db, "sixm_alert_enabled", 1);
     out->sixm_alert_interval_minutes = load_int_or_default(app->db, "sixm_alert_interval_minutes", 30);
     out->sixm_psk_trigger_spots = load_int_or_default(app->db, "sixm_psk_trigger_spots", 2);
+    out->twom_alert_enabled = load_int_or_default(app->db, "twom_alert_enabled", 1);
+    out->twom_alert_interval_minutes = load_int_or_default(app->db, "twom_alert_interval_minutes", 30);
+    out->twom_psk_trigger_spots = load_int_or_default(app->db, "twom_psk_trigger_spots", 1);
+    out->hamalert_enabled = load_int_or_default(app->db, "hamalert_enabled", 0);
+    load_text_or_default(app->db, "hamalert_webhook_token", out->hamalert_webhook_token, sizeof(out->hamalert_webhook_token), "change-me-hamalert");
+    out->hamalert_match_ol = load_int_or_default(app->db, "hamalert_match_ol", 1);
+    out->hamalert_use_for_6m = load_int_or_default(app->db, "hamalert_use_for_6m", 1);
+    out->hamalert_use_for_2m = load_int_or_default(app->db, "hamalert_use_for_2m", 1);
 
     load_text_or_default(app->db, "tropo_source_url", out->tropo_source_url, sizeof(out->tropo_source_url), "https://tropo.f5len.org/asia/");
     out->tropo_forecast_hours = load_int_or_default(app->db, "tropo_forecast_hours", 24);
@@ -412,9 +541,11 @@ int storage_load_settings(app_t *app, settings_t *out) {
 
     load_text_or_default(app->db, "report_template_full", out->report_template_full, sizeof(out->report_template_full), "{{section_hamqsl}}");
     load_text_or_default(app->db, "report_template_6m", out->report_template_6m, sizeof(out->report_template_6m), "{{section_6m}}");
+    load_text_or_default(app->db, "report_template_2m", out->report_template_2m, sizeof(out->report_template_2m), "{{section_2m}}");
     load_text_or_default(app->db, "report_template_solar", out->report_template_solar, sizeof(out->report_template_solar), "{{section_solar}}");
     load_text_or_default(app->db, "report_template_geomag", out->report_template_geomag, sizeof(out->report_template_geomag), "{{section_solar}}");
     load_text_or_default(app->db, "report_template_open6m", out->report_template_open6m, sizeof(out->report_template_open6m), "{{section_6m}}");
+    load_text_or_default(app->db, "report_template_open2m", out->report_template_open2m, sizeof(out->report_template_open2m), "{{section_2m}}");
     load_text_or_default(app->db, "help_template", out->help_template, sizeof(out->help_template), "帮助");
     load_text_or_default(app->db, "compact_template_hamqsl", out->compact_template_hamqsl, sizeof(out->compact_template_hamqsl),
         "更新时间：{{updated}}\nK 指数：{{kindex}}（地磁：{{geomagfield}}）\nHF 白天：{{hf_day}}\nHF 夜间：{{hf_night}}");
@@ -425,6 +556,7 @@ int storage_load_settings(app_t *app, settings_t *out) {
 
     load_text_or_default(app->db, "trigger_full", out->trigger_full, sizeof(out->trigger_full), "传播");
     load_text_or_default(app->db, "trigger_6m", out->trigger_6m, sizeof(out->trigger_6m), "6m,6米");
+    load_text_or_default(app->db, "trigger_2m", out->trigger_2m, sizeof(out->trigger_2m), "2m,2米");
     load_text_or_default(app->db, "trigger_solar", out->trigger_solar, sizeof(out->trigger_solar), "太阳");
     load_text_or_default(app->db, "trigger_help", out->trigger_help, sizeof(out->trigger_help), "帮助");
     load_text_or_default(app->db, "trigger_pskmap", out->trigger_pskmap, sizeof(out->trigger_pskmap), "PSK图,pskreporter");
@@ -450,13 +582,50 @@ int storage_load_settings(app_t *app, settings_t *out) {
     load_text_or_default(app->db, "section_template_satellite_unavailable", out->section_template_satellite_unavailable, sizeof(out->section_template_satellite_unavailable),
         "卫星星历暂不可用。");
     load_text_or_default(app->db, "section_template_6m", out->section_template_6m, sizeof(out->section_template_6m),
-        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+        "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\nHamAlert：15 分钟 {{psk_hamalert_hits_15m}} 条，60 分钟 {{psk_hamalert_hits_60m}} 条，最近一条 {{psk_hamalert_latest_text}} @ {{psk_hamalert_latest_time}}。\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。");
+    load_text_or_default(app->db, "section_template_2m", out->section_template_2m, sizeof(out->section_template_2m),
+        "PSKReporter：15 分钟本地 {{twom_local_spots_15m}} 条，60 分钟本地 {{twom_local_spots_60m}} 条，60 分钟全球 {{twom_global_spots_60m}} 条，判断 {{twom_assessment}}，置信度 {{twom_confidence}}，分值 {{twom_score}}/100。\nHamAlert：15 分钟 {{twom_hamalert_hits_15m}} 条，60 分钟 {{twom_hamalert_hits_60m}} 条，最近一条 {{twom_hamalert_latest_text}} @ {{twom_hamalert_latest_time}}。\n监控网格命中：{{twom_matched_grids}}\n最远相关路径：{{twom_farthest_peer}} {{twom_farthest_grid}}，约 {{twom_longest_path_km}} km。\n综合提醒级别：{{twom_alert_level}}。");
     load_text_or_default(app->db, "section_template_analysis", out->section_template_analysis, sizeof(out->section_template_analysis),
-        "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
+        "太阳面：{{sun_summary}}\n6 米综合：PSK/HamAlert 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n2 米综合：PSK/HamAlert 判断“{{twom_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{twom_weather_level}}”，当前建议级别为“{{twom_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。");
     load_text_or_default(app->db, "report_template_pskmap", out->report_template_pskmap, sizeof(out->report_template_pskmap),
         "PSKReporter 6m 快照\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}，判断：{{psk_assessment}}\n最新：{{psk_latest_pair}}\n{{pskmap_image_cq}}");
     load_text_or_default(app->db, "report_template_pskmap_failed", out->report_template_pskmap_failed, sizeof(out->report_template_pskmap_failed),
         "PSKReporter 6m 快照暂时生成失败：{{pskmap_error_detail}}\n台站：{{station_name}} ({{station_grid}})\n本地命中：15 分钟 {{psk_local_spots_15m}}，{{psk_window_minutes}} 分钟 {{psk_local_spots_60m}}\n最新：{{psk_latest_pair}}\n网页参考：{{pskmap_page_url}}");
+
+    load_text_or_default(app->db, "wording_psk_assessment_open", out->wording_psk_assessment_open, sizeof(out->wording_psk_assessment_open), "明显开口");
+    load_text_or_default(app->db, "wording_psk_assessment_possible", out->wording_psk_assessment_possible, sizeof(out->wording_psk_assessment_possible), "有开口迹象");
+    load_text_or_default(app->db, "wording_psk_assessment_global_only", out->wording_psk_assessment_global_only, sizeof(out->wording_psk_assessment_global_only), "全球活跃，本地待观察");
+    load_text_or_default(app->db, "wording_psk_assessment_quiet", out->wording_psk_assessment_quiet, sizeof(out->wording_psk_assessment_quiet), "暂未见本地开口");
+    load_text_or_default(app->db, "wording_psk_assessment_disconnected", out->wording_psk_assessment_disconnected, sizeof(out->wording_psk_assessment_disconnected), "实时数据未连接");
+    load_text_or_default(app->db, "wording_psk_assessment_hamalert_open", out->wording_psk_assessment_hamalert_open, sizeof(out->wording_psk_assessment_hamalert_open), "HamAlert 有相关开口报告");
+    load_text_or_default(app->db, "wording_psk_assessment_hamalert_hint", out->wording_psk_assessment_hamalert_hint, sizeof(out->wording_psk_assessment_hamalert_hint), "HamAlert 有相关线索");
+    load_text_or_default(app->db, "wording_psk_confidence_high", out->wording_psk_confidence_high, sizeof(out->wording_psk_confidence_high), "高");
+    load_text_or_default(app->db, "wording_psk_confidence_medium", out->wording_psk_confidence_medium, sizeof(out->wording_psk_confidence_medium), "中");
+    load_text_or_default(app->db, "wording_psk_confidence_low", out->wording_psk_confidence_low, sizeof(out->wording_psk_confidence_low), "低");
+    load_text_or_default(app->db, "wording_psk_confidence_unknown", out->wording_psk_confidence_unknown, sizeof(out->wording_psk_confidence_unknown), "未知");
+    load_text_or_default(app->db, "wording_alert_none", out->wording_alert_none, sizeof(out->wording_alert_none), "暂无提醒");
+    load_text_or_default(app->db, "wording_alert_info", out->wording_alert_info, sizeof(out->wording_alert_info), "一般提醒");
+    load_text_or_default(app->db, "wording_alert_watch", out->wording_alert_watch, sizeof(out->wording_alert_watch), "重点观察");
+    load_text_or_default(app->db, "wording_alert_strong", out->wording_alert_strong, sizeof(out->wording_alert_strong), "强提醒");
+    out->lotw_enabled = load_int_or_default(app->db, "lotw_enabled", 0);
+    load_text_or_default(app->db, "lotw_login", out->lotw_login, sizeof(out->lotw_login), "");
+    load_text_or_default(app->db, "lotw_password", out->lotw_password, sizeof(out->lotw_password), "");
+    load_text_or_default(app->db, "lotw_station_callsign", out->lotw_station_callsign, sizeof(out->lotw_station_callsign), "");
+    out->lotw_sync_interval_minutes = load_int_or_default(app->db, "lotw_sync_interval_minutes", 180);
+    out->lotw_fetch_qso_enabled = load_int_or_default(app->db, "lotw_fetch_qso_enabled", 1);
+    out->lotw_fetch_qsl_enabled = load_int_or_default(app->db, "lotw_fetch_qsl_enabled", 1);
+    load_text_or_default(app->db, "clublog_callsign", out->clublog_callsign, sizeof(out->clublog_callsign), "");
+    load_text_or_default(app->db, "clublog_api_key", out->clublog_api_key, sizeof(out->clublog_api_key), "");
+    load_text_or_default(app->db, "clublog_app_password", out->clublog_app_password, sizeof(out->clublog_app_password), "");
+    load_text_or_default(app->db, "qrz_callsign", out->qrz_callsign, sizeof(out->qrz_callsign), "");
+    load_text_or_default(app->db, "qrz_logbook_api_key", out->qrz_logbook_api_key, sizeof(out->qrz_logbook_api_key), "");
+    out->award_recent_days = load_int_or_default(app->db, "award_recent_days", 30);
+    load_text_or_default(app->db, "report_template_dxcc", out->report_template_dxcc, sizeof(out->report_template_dxcc), "DXCC {{dxcc_confirmed_total}}");
+    load_text_or_default(app->db, "report_template_vucc", out->report_template_vucc, sizeof(out->report_template_vucc), "VUCC {{vucc_confirmed_grids}}");
+    load_text_or_default(app->db, "report_template_qrz_award", out->report_template_qrz_award, sizeof(out->report_template_qrz_award), "QRZ {{qrz_award_name}}");
+    load_text_or_default(app->db, "trigger_dxcc", out->trigger_dxcc, sizeof(out->trigger_dxcc), "DXCC");
+    load_text_or_default(app->db, "trigger_vucc", out->trigger_vucc, sizeof(out->trigger_vucc), "VUCC");
+    load_text_or_default(app->db, "trigger_qrz_award", out->trigger_qrz_award, sizeof(out->trigger_qrz_award), "QRZ,亚洲硕士");
 
     pthread_mutex_unlock(&app->db_mutex);
 
@@ -478,11 +647,15 @@ int storage_load_settings(app_t *app, settings_t *out) {
     out->geomag_alert_threshold_g = clamp_int(out->geomag_alert_threshold_g, 1, 5);
     out->sixm_alert_interval_minutes = clamp_int(out->sixm_alert_interval_minutes, 1, 720);
     out->sixm_psk_trigger_spots = clamp_int(out->sixm_psk_trigger_spots, 1, 20);
+    out->twom_alert_interval_minutes = clamp_int(out->twom_alert_interval_minutes, 1, 720);
+    out->twom_psk_trigger_spots = clamp_int(out->twom_psk_trigger_spots, 1, 20);
     out->tropo_forecast_hours = clamp_int(out->tropo_forecast_hours, 3, 192);
     out->satellite_days = clamp_int(out->satellite_days, 1, 10);
     out->satellite_min_elevation = clamp_int(out->satellite_min_elevation, 1, 89);
     out->satellite_max_items = clamp_int(out->satellite_max_items, 1, MAX_PASSES);
     out->refresh_interval_minutes = clamp_int(out->refresh_interval_minutes, 1, 1440);
+    out->lotw_sync_interval_minutes = clamp_int(out->lotw_sync_interval_minutes, 15, 10080);
+    out->award_recent_days = clamp_int(out->award_recent_days, 1, 365);
     return 0;
 }
 

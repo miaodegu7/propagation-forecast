@@ -7,7 +7,7 @@ EXEEXT ?=
 CFLAGS ?= -O2 -Wall -Wextra -Wpedantic -std=c11
 LDFLAGS ?=
 
-SRC := src/main.c src/util.c src/storage.c src/fetch.c src/runtime.c src/psk.c src/http_server.c
+SRC := src/main.c src/util.c src/storage.c src/fetch.c src/runtime.c src/psk.c src/hamalert.c src/awards.c src/http_server.c
 OBJ := $(SRC:.c=.o)
 
 TARGET ?= propagation_bot$(EXEEXT)
@@ -23,7 +23,7 @@ LDLIBS ?= $(PKG_LIBS) -lm
 endif
 
 ifeq ($(OS),Windows_NT)
-SOCKET_LIBS ?= -lws2_32
+SOCKET_LIBS ?= -lws2_32 -lole32 -lgdiplus
 else
 SOCKET_LIBS ?=
 endif

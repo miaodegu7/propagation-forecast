@@ -700,50 +700,103 @@ static int geomag_g_from_k(int kindex) {
     return 0;
 }
 
-static const char *sixm_alert_label_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+static const char *text_or_default(const char *value, const char *fallback) {
+    return (value && *value) ? value : fallback;
+}
+
+static int sixm_alert_level_from_snapshot_internal(const snapshot_t *snapshot, const settings_t *settings) {
     int psk_hot = snapshot->psk.local_spots_15m >= settings->sixm_psk_trigger_spots ||
         snapshot->psk.local_spots_60m >= settings->sixm_psk_trigger_spots;
     int psk_some = snapshot->psk.local_spots_60m > 0;
+    int hamalert_hot = snapshot->psk.hamalert_hits_15m >= settings->sixm_psk_trigger_spots ||
+        snapshot->psk.hamalert_hits_60m >= settings->sixm_psk_trigger_spots;
+    int hamalert_some = snapshot->psk.hamalert_hits_60m > 0;
     int tropo_hot = snapshot->tropo.valid && snapshot->tropo.score >= 78;
     int tropo_some = snapshot->tropo.valid && snapshot->tropo.score >= 55;
     int weather_hot = snapshot->weather.valid && snapshot->weather.sixm_weather_score >= 70;
     int weather_some = snapshot->weather.valid && snapshot->weather.sixm_weather_score >= 50;
 
-    if (psk_hot && (tropo_some || weather_some)) return "强提醒";
-    if (psk_hot || (psk_some && (tropo_some || weather_some)) || (tropo_hot && weather_hot)) return "重点观察";
-    if (psk_some || tropo_some || weather_some) return "一般提醒";
-    return "暂无提醒";
+    if ((psk_hot || hamalert_hot) && (tropo_some || weather_some || psk_some)) return 3;
+    if (psk_hot || hamalert_hot || ((psk_some || hamalert_some) && (tropo_some || weather_some)) || (tropo_hot && weather_hot)) return 2;
+    if (psk_some || hamalert_some || tropo_some || weather_some) return 1;
+    return 0;
+}
+
+static int twom_alert_level_from_snapshot_internal(const snapshot_t *snapshot, const settings_t *settings) {
+    int psk_hot = snapshot->twom.local_spots_15m >= settings->twom_psk_trigger_spots ||
+        snapshot->twom.local_spots_60m >= settings->twom_psk_trigger_spots;
+    int psk_some = snapshot->twom.local_spots_60m > 0;
+    int hamalert_hot = snapshot->twom.hamalert_hits_15m >= settings->twom_psk_trigger_spots ||
+        snapshot->twom.hamalert_hits_60m >= settings->twom_psk_trigger_spots;
+    int hamalert_some = snapshot->twom.hamalert_hits_60m > 0;
+    int tropo_hot = snapshot->tropo.valid && snapshot->tropo.score >= 68;
+    int tropo_some = snapshot->tropo.valid && snapshot->tropo.score >= 52;
+    int weather_hot = snapshot->weather.valid && snapshot->weather.twom_weather_score >= 70;
+    int weather_some = snapshot->weather.valid && snapshot->weather.twom_weather_score >= 50;
+
+    if ((psk_hot || hamalert_hot) && (tropo_some || weather_some || psk_some)) return 3;
+    if (psk_hot || hamalert_hot || (tropo_hot && weather_hot) || ((psk_some || hamalert_some) && (tropo_some || weather_some))) return 2;
+    if (psk_some || hamalert_some || tropo_some || weather_some) return 1;
+    return 0;
+}
+
+const char *sixm_alert_label_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    switch (sixm_alert_level_from_snapshot_internal(snapshot, settings)) {
+        case 3: return text_or_default(settings->wording_alert_strong, "强提醒");
+        case 2: return text_or_default(settings->wording_alert_watch, "重点观察");
+        case 1: return text_or_default(settings->wording_alert_info, "一般提醒");
+        default: return text_or_default(settings->wording_alert_none, "暂无提醒");
+    }
+}
+
+const char *twom_alert_label_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    switch (twom_alert_level_from_snapshot_internal(snapshot, settings)) {
+        case 3: return text_or_default(settings->wording_alert_strong, "强提醒");
+        case 2: return text_or_default(settings->wording_alert_watch, "重点观察");
+        case 1: return text_or_default(settings->wording_alert_info, "一般提醒");
+        default: return text_or_default(settings->wording_alert_none, "暂无提醒");
+    }
 }
 
 static const char *template_or_default(const char *tmpl, const char *fallback) {
     return (tmpl && *tmpl) ? tmpl : fallback;
 }
 
-static const char *psk_assessment_code_from_text(const char *text) {
-    if (!text || !*text) return "unknown";
-    if (string_contains_ci(text, "明") || string_contains_ci(text, "open")) return "open";
-    if (string_contains_ci(text, "迹象") || string_contains_ci(text, "possible")) return "possible";
-    if (string_contains_ci(text, "全球")) return "global_only";
-    if (string_contains_ci(text, "未连接")) return "disconnected";
-    if (string_contains_ci(text, "暂未")) return "quiet";
-    return "custom";
+const char *psk_assessment_code_from_summary(const psk_summary_t *summary) {
+    if (!summary) return "unknown";
+    if (summary->local_spots_60m == 0 && summary->hamalert_hits_15m >= 2) return "hamalert_open";
+    if (summary->local_spots_60m == 0 && summary->hamalert_hits_60m > 0) return "hamalert_hint";
+    if (summary->local_spots_15m >= 3 || summary->local_spots_60m >= 6) return "open";
+    if (summary->local_spots_60m >= 2) return "possible";
+    if (summary->global_spots_60m >= 20) return "global_only";
+    if (summary->mqtt_connected) return "quiet";
+    return "disconnected";
 }
 
-static const char *psk_confidence_code_from_text(const char *text) {
-    if (!text || !*text) return "unknown";
-    if (strcmp(text, "高") == 0 || string_contains_ci(text, "high")) return "high";
-    if (strcmp(text, "中") == 0 || string_contains_ci(text, "medium")) return "medium";
-    if (strcmp(text, "低") == 0 || string_contains_ci(text, "low")) return "low";
-    if (strcmp(text, "未知") == 0 || string_contains_ci(text, "unknown")) return "unknown";
-    return "custom";
+const char *psk_confidence_code_from_summary(const psk_summary_t *summary) {
+    if (!summary) return "unknown";
+    if (!summary->mqtt_connected && summary->local_spots_60m == 0 && summary->hamalert_hits_60m == 0) return "unknown";
+    if (summary->local_spots_15m >= 3 || summary->local_spots_60m >= 6) return "high";
+    if (summary->local_spots_60m >= 2 || summary->hamalert_hits_15m >= 2) return "medium";
+    return "low";
 }
 
-static const char *sixm_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
-    const char *label = sixm_alert_label_from_snapshot(snapshot, settings);
-    if (string_contains_ci(label, "强")) return "strong";
-    if (string_contains_ci(label, "重点")) return "watch";
-    if (string_contains_ci(label, "一般")) return "info";
-    return "none";
+const char *sixm_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    switch (sixm_alert_level_from_snapshot_internal(snapshot, settings)) {
+        case 3: return "strong";
+        case 2: return "watch";
+        case 1: return "info";
+        default: return "none";
+    }
+}
+
+const char *twom_alert_code_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    switch (twom_alert_level_from_snapshot_internal(snapshot, settings)) {
+        case 3: return "strong";
+        case 2: return "watch";
+        case 1: return "info";
+        default: return "none";
+    }
 }
 
 static const char *tropo_category_code_from_label(const char *label) {
@@ -1034,6 +1087,38 @@ int fetch_weather_data(const settings_t *settings, weather_data_t *out) {
         copy_string(out->sixm_weather_level, sizeof(out->sixm_weather_level), "轻度支持");
     } else {
         copy_string(out->sixm_weather_level, sizeof(out->sixm_weather_level), "参考价值有限");
+    }
+
+    score = 18;
+    if (!out->is_day) score += 6;
+    if (out->pressure_hpa >= 1016.0) score += 16;
+    else if (out->pressure_hpa >= 1010.0) score += 10;
+    else if (out->pressure_hpa >= 1005.0) score += 5;
+    if (out->humidity >= 55 && out->humidity <= 95) score += 12;
+    else if (out->humidity >= 40) score += 6;
+    if (out->cloud_cover >= 15 && out->cloud_cover <= 75) score += 10;
+    else if (out->cloud_cover < 90) score += 5;
+    if (out->visibility_m >= 15000.0) score += 10;
+    else if (out->visibility_m >= 8000.0) score += 6;
+    if (out->wind_kmh >= 3.0 && out->wind_kmh <= 25.0) score += 8;
+    else if (out->wind_kmh <= 35.0) score += 4;
+    if (out->daily_precip_probability <= 25) score += 8;
+    else if (out->daily_precip_probability <= 50) score += 4;
+    if (out->lifted_index >= 0.0) score += 6;
+    else if (out->lifted_index >= -2.0) score += 3;
+    if (out->cape <= 150.0) score += 6;
+    else if (out->cape <= 400.0) score += 3;
+    if (out->dewpoint_c >= 0.0) score += 4;
+
+    out->twom_weather_score = clamp_int(score, 0, 100);
+    if (out->twom_weather_score >= 72) {
+        copy_string(out->twom_weather_level, sizeof(out->twom_weather_level), "对流层条件较好");
+    } else if (out->twom_weather_score >= 55) {
+        copy_string(out->twom_weather_level, sizeof(out->twom_weather_level), "有一定对流层支持");
+    } else if (out->twom_weather_score >= 40) {
+        copy_string(out->twom_weather_level, sizeof(out->twom_weather_level), "可作辅助参考");
+    } else {
+        copy_string(out->twom_weather_level, sizeof(out->twom_weather_level), "对流层支持有限");
     }
 
     out->valid = 1;
@@ -1558,12 +1643,12 @@ static int render_template(char *out, size_t out_len, const char *tmpl,
     return app_render_template(out, out_len, tmpl, tokens, token_count);
 }
 
-static int sixm_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
-    const char *code = sixm_alert_code_from_snapshot(snapshot, settings);
-    if (strcmp(code, "strong") == 0) return 3;
-    if (strcmp(code, "watch") == 0) return 2;
-    if (strcmp(code, "info") == 0) return 1;
-    return 0;
+int sixm_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    return sixm_alert_level_from_snapshot_internal(snapshot, settings);
+}
+
+int twom_alert_num_from_snapshot(const snapshot_t *snapshot, const settings_t *settings) {
+    return twom_alert_level_from_snapshot_internal(snapshot, settings);
 }
 
 static void inline_copy(char *out, size_t out_len, const char *text) {
@@ -1662,6 +1747,7 @@ static void build_weather_section_custom(const settings_t *settings, const weath
     char tmin_text[32] = "";
     char daily_precip_text[32] = "";
     char weather_score_text[32] = "";
+    char twom_weather_score_text[32] = "";
     template_token_t tokens[] = {
         {"weather_current_time", weather->current_time},
         {"weather_is_day", is_day_text},
@@ -1683,6 +1769,9 @@ static void build_weather_section_custom(const settings_t *settings, const weath
         {"daily_precip_probability", daily_precip_text},
         {"weather_level", weather->sixm_weather_level},
         {"weather_score", weather_score_text}
+        ,
+        {"twom_weather_level", weather->twom_weather_level},
+        {"twom_weather_score", twom_weather_score_text}
     };
 
     if (!weather->valid) {
@@ -1708,6 +1797,7 @@ static void build_weather_section_custom(const settings_t *settings, const weath
     snprintf(tmin_text, sizeof(tmin_text), "%.1f", weather->tmin_c);
     snprintf(daily_precip_text, sizeof(daily_precip_text), "%d", weather->daily_precip_probability);
     snprintf(weather_score_text, sizeof(weather_score_text), "%d", weather->sixm_weather_score);
+    snprintf(twom_weather_score_text, sizeof(twom_weather_score_text), "%d", weather->twom_weather_score);
 
     app_render_template(out, out_len,
         template_or_default(settings->section_template_weather,
@@ -1897,6 +1987,8 @@ static void build_sixm_section_custom(const settings_t *settings, const snapshot
     char global_spots_60m_text[32] = "";
     char local_spots_15m_text[32] = "";
     char local_spots_60m_text[32] = "";
+    char hamalert_hits_15m_text[32] = "";
+    char hamalert_hits_60m_text[32] = "";
     char longest_path_text[32] = "";
     char best_snr_text[32] = "";
     char score_text[32] = "";
@@ -1910,6 +2002,13 @@ static void build_sixm_section_custom(const settings_t *settings, const snapshot
         {"psk_global_spots_60m", global_spots_60m_text},
         {"psk_local_spots_15m", local_spots_15m_text},
         {"psk_local_spots_60m", local_spots_60m_text},
+        {"psk_hamalert_hits_15m", hamalert_hits_15m_text},
+        {"psk_hamalert_hits_60m", hamalert_hits_60m_text},
+        {"psk_hamalert_latest_time", snapshot->psk.hamalert_latest_time},
+        {"psk_hamalert_latest_text", snapshot->psk.hamalert_latest_text},
+        {"psk_hamalert_sources", snapshot->psk.hamalert_sources},
+        {"psk_hamalert_matched_grids", snapshot->psk.hamalert_matched_grids},
+        {"psk_hamalert_matched_ols", snapshot->psk.hamalert_matched_ols},
         {"psk_longest_path_km", longest_path_text},
         {"psk_best_snr", best_snr_text},
         {"psk_score", score_text},
@@ -1932,17 +2031,85 @@ static void build_sixm_section_custom(const settings_t *settings, const snapshot
     snprintf(global_spots_60m_text, sizeof(global_spots_60m_text), "%d", snapshot->psk.global_spots_60m);
     snprintf(local_spots_15m_text, sizeof(local_spots_15m_text), "%d", snapshot->psk.local_spots_15m);
     snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot->psk.local_spots_60m);
+    snprintf(hamalert_hits_15m_text, sizeof(hamalert_hits_15m_text), "%d", snapshot->psk.hamalert_hits_15m);
+    snprintf(hamalert_hits_60m_text, sizeof(hamalert_hits_60m_text), "%d", snapshot->psk.hamalert_hits_60m);
     snprintf(longest_path_text, sizeof(longest_path_text), "%d", snapshot->psk.longest_path_km);
     snprintf(best_snr_text, sizeof(best_snr_text), "%d", snapshot->psk.best_snr);
     snprintf(score_text, sizeof(score_text), "%d", snapshot->psk.score);
     snprintf(sixm_alert_num_text, sizeof(sixm_alert_num_text), "%d", sixm_alert_num_from_snapshot(snapshot, settings));
-    copy_string(assessment_code, sizeof(assessment_code), psk_assessment_code_from_text(snapshot->psk.assessment));
-    copy_string(confidence_code, sizeof(confidence_code), psk_confidence_code_from_text(snapshot->psk.confidence));
+    copy_string(assessment_code, sizeof(assessment_code), psk_assessment_code_from_summary(&snapshot->psk));
+    copy_string(confidence_code, sizeof(confidence_code), psk_confidence_code_from_summary(&snapshot->psk));
     copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, settings));
 
     app_render_template(out, out_len,
         template_or_default(settings->section_template_6m,
-            "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\n最近相关 spot：{{psk_latest_pair}} @ {{psk_latest_local_time}}\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。"),
+            "PSKReporter：15 分钟本地 {{psk_local_spots_15m}} 条，60 分钟本地 {{psk_local_spots_60m}} 条，60 分钟全球 {{psk_global_spots_60m}} 条，判断 {{psk_assessment}}，置信度 {{psk_confidence}}，分值 {{psk_score}}/100。\nHamAlert：15 分钟 {{psk_hamalert_hits_15m}} 条，60 分钟 {{psk_hamalert_hits_60m}} 条，最近一条 {{psk_hamalert_latest_text}} @ {{psk_hamalert_latest_time}}。\n监控网格命中：{{psk_matched_grids}}\n最远相关路径：{{psk_farthest_peer}} {{psk_farthest_grid}}，约 {{psk_longest_path_km}} km。\n综合提醒级别：{{sixm_alert_level}}。"),
+        tokens, sizeof(tokens) / sizeof(tokens[0]));
+}
+
+static void build_twom_section_custom(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
+    char mqtt_connected_text[8] = "";
+    char global_spots_15m_text[32] = "";
+    char global_spots_60m_text[32] = "";
+    char local_spots_15m_text[32] = "";
+    char local_spots_60m_text[32] = "";
+    char hamalert_hits_15m_text[32] = "";
+    char hamalert_hits_60m_text[32] = "";
+    char longest_path_text[32] = "";
+    char best_snr_text[32] = "";
+    char score_text[32] = "";
+    char twom_alert_num_text[32] = "";
+    char assessment_code[MAX_TEXT] = "";
+    char confidence_code[MAX_TEXT] = "";
+    char twom_alert_code[MAX_TEXT] = "";
+    template_token_t tokens[] = {
+        {"twom_mqtt_connected", mqtt_connected_text},
+        {"twom_global_spots_15m", global_spots_15m_text},
+        {"twom_global_spots_60m", global_spots_60m_text},
+        {"twom_local_spots_15m", local_spots_15m_text},
+        {"twom_local_spots_60m", local_spots_60m_text},
+        {"twom_hamalert_hits_15m", hamalert_hits_15m_text},
+        {"twom_hamalert_hits_60m", hamalert_hits_60m_text},
+        {"twom_hamalert_latest_time", snapshot->twom.hamalert_latest_time},
+        {"twom_hamalert_latest_text", snapshot->twom.hamalert_latest_text},
+        {"twom_hamalert_sources", snapshot->twom.hamalert_sources},
+        {"twom_hamalert_matched_grids", snapshot->twom.hamalert_matched_grids},
+        {"twom_hamalert_matched_ols", snapshot->twom.hamalert_matched_ols},
+        {"twom_longest_path_km", longest_path_text},
+        {"twom_best_snr", best_snr_text},
+        {"twom_score", score_text},
+        {"twom_assessment", snapshot->twom.assessment},
+        {"twom_assessment_code", assessment_code},
+        {"twom_confidence", snapshot->twom.confidence},
+        {"twom_confidence_code", confidence_code},
+        {"twom_latest_pair", snapshot->twom.latest_pair},
+        {"twom_latest_local_time", snapshot->twom.latest_local_time},
+        {"twom_matched_grids", snapshot->twom.matched_grids},
+        {"twom_farthest_peer", snapshot->twom.farthest_peer},
+        {"twom_farthest_grid", snapshot->twom.farthest_grid},
+        {"twom_alert_level", twom_alert_label_from_snapshot(snapshot, settings)},
+        {"twom_alert_level_num", twom_alert_num_text},
+        {"twom_alert_code", twom_alert_code}
+    };
+
+    snprintf(mqtt_connected_text, sizeof(mqtt_connected_text), "%d", snapshot->twom.mqtt_connected ? 1 : 0);
+    snprintf(global_spots_15m_text, sizeof(global_spots_15m_text), "%d", snapshot->twom.global_spots_15m);
+    snprintf(global_spots_60m_text, sizeof(global_spots_60m_text), "%d", snapshot->twom.global_spots_60m);
+    snprintf(local_spots_15m_text, sizeof(local_spots_15m_text), "%d", snapshot->twom.local_spots_15m);
+    snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot->twom.local_spots_60m);
+    snprintf(hamalert_hits_15m_text, sizeof(hamalert_hits_15m_text), "%d", snapshot->twom.hamalert_hits_15m);
+    snprintf(hamalert_hits_60m_text, sizeof(hamalert_hits_60m_text), "%d", snapshot->twom.hamalert_hits_60m);
+    snprintf(longest_path_text, sizeof(longest_path_text), "%d", snapshot->twom.longest_path_km);
+    snprintf(best_snr_text, sizeof(best_snr_text), "%d", snapshot->twom.best_snr);
+    snprintf(score_text, sizeof(score_text), "%d", snapshot->twom.score);
+    snprintf(twom_alert_num_text, sizeof(twom_alert_num_text), "%d", twom_alert_num_from_snapshot(snapshot, settings));
+    copy_string(assessment_code, sizeof(assessment_code), psk_assessment_code_from_summary(&snapshot->twom));
+    copy_string(confidence_code, sizeof(confidence_code), psk_confidence_code_from_summary(&snapshot->twom));
+    copy_string(twom_alert_code, sizeof(twom_alert_code), twom_alert_code_from_snapshot(snapshot, settings));
+
+    app_render_template(out, out_len,
+        template_or_default(settings->section_template_2m,
+            "PSKReporter：15 分钟本地 {{twom_local_spots_15m}} 条，60 分钟本地 {{twom_local_spots_60m}} 条，60 分钟全球 {{twom_global_spots_60m}} 条，判断 {{twom_assessment}}，置信度 {{twom_confidence}}，分值 {{twom_score}}/100。\nHamAlert：15 分钟 {{twom_hamalert_hits_15m}} 条，60 分钟 {{twom_hamalert_hits_60m}} 条，最近一条 {{twom_hamalert_latest_text}} @ {{twom_hamalert_latest_time}}。\n监控网格命中：{{twom_matched_grids}}\n最远相关路径：{{twom_farthest_peer}} {{twom_farthest_grid}}，约 {{twom_longest_path_km}} km。\n综合提醒级别：{{twom_alert_level}}。"),
         tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
@@ -1978,32 +2145,48 @@ static void build_sources_section_custom(const settings_t *settings, const snaps
 static void build_analysis_summary_custom(const settings_t *settings, const snapshot_t *snapshot, char *out, size_t out_len) {
     char tropo_score_text[32] = "";
     char weather_score_text[32] = "";
+    char twom_weather_score_text[32] = "";
     char local_spots_60m_text[32] = "";
+    char twom_local_spots_60m_text[32] = "";
     char sixm_alert_num_text[32] = "";
+    char twom_alert_num_text[32] = "";
     char sixm_alert_code[MAX_TEXT] = "";
+    char twom_alert_code[MAX_TEXT] = "";
     template_token_t tokens[] = {
         {"sun_summary", snapshot->sun_summary},
         {"psk_assessment", snapshot->psk.assessment},
         {"psk_confidence", snapshot->psk.confidence},
         {"psk_local_spots_60m", local_spots_60m_text},
+        {"twom_assessment", snapshot->twom.assessment},
+        {"twom_confidence", snapshot->twom.confidence},
+        {"twom_local_spots_60m", twom_local_spots_60m_text},
         {"tropo_category", snapshot->tropo.valid ? snapshot->tropo.category : ""},
         {"tropo_score", tropo_score_text},
         {"weather_level", snapshot->weather.valid ? snapshot->weather.sixm_weather_level : ""},
         {"weather_score", weather_score_text},
+        {"twom_weather_level", snapshot->weather.valid ? snapshot->weather.twom_weather_level : ""},
+        {"twom_weather_score", twom_weather_score_text},
         {"sixm_alert_level", sixm_alert_label_from_snapshot(snapshot, settings)},
         {"sixm_alert_level_num", sixm_alert_num_text},
-        {"sixm_alert_code", sixm_alert_code}
+        {"sixm_alert_code", sixm_alert_code},
+        {"twom_alert_level", twom_alert_label_from_snapshot(snapshot, settings)},
+        {"twom_alert_level_num", twom_alert_num_text},
+        {"twom_alert_code", twom_alert_code}
     };
 
     snprintf(tropo_score_text, sizeof(tropo_score_text), "%d", snapshot->tropo.score);
     snprintf(weather_score_text, sizeof(weather_score_text), "%d", snapshot->weather.sixm_weather_score);
+    snprintf(twom_weather_score_text, sizeof(twom_weather_score_text), "%d", snapshot->weather.twom_weather_score);
     snprintf(local_spots_60m_text, sizeof(local_spots_60m_text), "%d", snapshot->psk.local_spots_60m);
+    snprintf(twom_local_spots_60m_text, sizeof(twom_local_spots_60m_text), "%d", snapshot->twom.local_spots_60m);
     snprintf(sixm_alert_num_text, sizeof(sixm_alert_num_text), "%d", sixm_alert_num_from_snapshot(snapshot, settings));
+    snprintf(twom_alert_num_text, sizeof(twom_alert_num_text), "%d", twom_alert_num_from_snapshot(snapshot, settings));
     copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, settings));
+    copy_string(twom_alert_code, sizeof(twom_alert_code), twom_alert_code_from_snapshot(snapshot, settings));
 
     app_render_template(out, out_len,
         template_or_default(settings->section_template_analysis,
-            "太阳面：{{sun_summary}}\n6 米综合：PSK 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。"),
+            "太阳面：{{sun_summary}}\n6 米综合：PSK/HamAlert 判断“{{psk_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{weather_level}}”，当前建议级别为“{{sixm_alert_level}}”。\n2 米综合：PSK/HamAlert 判断“{{twom_assessment}}”，F5LEN 为“{{tropo_category}}”，气象辅助为“{{twom_weather_level}}”，当前建议级别为“{{twom_alert_level}}”。\n运维提示：抓取频率按独立轮询处理，手动查询不会重置周期。"),
         tokens, sizeof(tokens) / sizeof(tokens[0]));
 }
 
@@ -2024,6 +2207,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     build_meteor_section_custom(&settings, &snapshot->meteor, snapshot->section_meteor, sizeof(snapshot->section_meteor));
     build_satellite_section_custom(&settings, &snapshot->satellite, snapshot->section_satellite, sizeof(snapshot->section_satellite));
     build_sixm_section_custom(&settings, snapshot, snapshot->section_6m, sizeof(snapshot->section_6m));
+    build_twom_section_custom(&settings, snapshot, snapshot->section_2m, sizeof(snapshot->section_2m));
     build_sources_section_custom(&settings, snapshot, snapshot->section_sources, sizeof(snapshot->section_sources));
     build_analysis_summary_custom(&settings, snapshot, snapshot->analysis_summary, sizeof(snapshot->analysis_summary));
 
@@ -2034,6 +2218,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char ham_sunspots[32];
     char ham_geomag_g[32];
     char weather_score[32];
+    char twom_weather_score[32];
     char tropo_score[32];
     char meteor_days_left[32];
     char ham_updated[MAX_TEXT];
@@ -2049,13 +2234,29 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char psk_global_spots_60m[32];
     char psk_local_spots_15m[32];
     char psk_local_spots_60m[32];
+    char psk_hamalert_hits_15m[32];
+    char psk_hamalert_hits_60m[32];
     char psk_longest_path_km[32];
     char psk_best_snr[32];
     char psk_score[32];
     char sixm_alert_level_num[32];
+    char twom_mqtt_connected[8];
+    char twom_global_spots_15m[32];
+    char twom_global_spots_60m[32];
+    char twom_local_spots_15m[32];
+    char twom_local_spots_60m[32];
+    char twom_hamalert_hits_15m[32];
+    char twom_hamalert_hits_60m[32];
+    char twom_longest_path_km[32];
+    char twom_best_snr[32];
+    char twom_score[32];
+    char twom_alert_level_num[32];
     char psk_assessment_code[MAX_TEXT];
     char psk_confidence_code[MAX_TEXT];
     char sixm_alert_code[MAX_TEXT];
+    char twom_assessment_code[MAX_TEXT];
+    char twom_confidence_code[MAX_TEXT];
+    char twom_alert_code[MAX_TEXT];
     char meteor_countdown_code[MAX_TEXT];
     char tropo_category_code[MAX_TEXT];
     char satellite_api_status_code[MAX_TEXT];
@@ -2066,6 +2267,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     snprintf(ham_sunspots, sizeof(ham_sunspots), "%d", snapshot->hamqsl.sunspots);
     snprintf(ham_geomag_g, sizeof(ham_geomag_g), "%d", geomag_g_from_k(snapshot->hamqsl.kindex));
     snprintf(weather_score, sizeof(weather_score), "%d", snapshot->weather.sixm_weather_score);
+    snprintf(twom_weather_score, sizeof(twom_weather_score), "%d", snapshot->weather.twom_weather_score);
     snprintf(tropo_score, sizeof(tropo_score), "%d", snapshot->tropo.score);
     snprintf(meteor_days_left, sizeof(meteor_days_left), "%d", snapshot->meteor.days_left);
     copy_string(ham_updated, sizeof(ham_updated), snapshot->hamqsl.valid ? snapshot->hamqsl.updated : "");
@@ -2082,18 +2284,35 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     snprintf(psk_global_spots_60m, sizeof(psk_global_spots_60m), "%d", snapshot->psk.global_spots_60m);
     snprintf(psk_local_spots_15m, sizeof(psk_local_spots_15m), "%d", snapshot->psk.local_spots_15m);
     snprintf(psk_local_spots_60m, sizeof(psk_local_spots_60m), "%d", snapshot->psk.local_spots_60m);
+    snprintf(psk_hamalert_hits_15m, sizeof(psk_hamalert_hits_15m), "%d", snapshot->psk.hamalert_hits_15m);
+    snprintf(psk_hamalert_hits_60m, sizeof(psk_hamalert_hits_60m), "%d", snapshot->psk.hamalert_hits_60m);
     snprintf(psk_longest_path_km, sizeof(psk_longest_path_km), "%d", snapshot->psk.longest_path_km);
     snprintf(psk_best_snr, sizeof(psk_best_snr), "%d", snapshot->psk.best_snr);
     snprintf(psk_score, sizeof(psk_score), "%d", snapshot->psk.score);
     snprintf(sixm_alert_level_num, sizeof(sixm_alert_level_num), "%d", sixm_alert_num_from_snapshot(snapshot, &settings));
-    copy_string(psk_assessment_code, sizeof(psk_assessment_code), psk_assessment_code_from_text(snapshot->psk.assessment));
-    copy_string(psk_confidence_code, sizeof(psk_confidence_code), psk_confidence_code_from_text(snapshot->psk.confidence));
+    snprintf(twom_mqtt_connected, sizeof(twom_mqtt_connected), "%d", snapshot->twom.mqtt_connected ? 1 : 0);
+    snprintf(twom_global_spots_15m, sizeof(twom_global_spots_15m), "%d", snapshot->twom.global_spots_15m);
+    snprintf(twom_global_spots_60m, sizeof(twom_global_spots_60m), "%d", snapshot->twom.global_spots_60m);
+    snprintf(twom_local_spots_15m, sizeof(twom_local_spots_15m), "%d", snapshot->twom.local_spots_15m);
+    snprintf(twom_local_spots_60m, sizeof(twom_local_spots_60m), "%d", snapshot->twom.local_spots_60m);
+    snprintf(twom_hamalert_hits_15m, sizeof(twom_hamalert_hits_15m), "%d", snapshot->twom.hamalert_hits_15m);
+    snprintf(twom_hamalert_hits_60m, sizeof(twom_hamalert_hits_60m), "%d", snapshot->twom.hamalert_hits_60m);
+    snprintf(twom_longest_path_km, sizeof(twom_longest_path_km), "%d", snapshot->twom.longest_path_km);
+    snprintf(twom_best_snr, sizeof(twom_best_snr), "%d", snapshot->twom.best_snr);
+    snprintf(twom_score, sizeof(twom_score), "%d", snapshot->twom.score);
+    snprintf(twom_alert_level_num, sizeof(twom_alert_level_num), "%d", twom_alert_num_from_snapshot(snapshot, &settings));
+    copy_string(psk_assessment_code, sizeof(psk_assessment_code), psk_assessment_code_from_summary(&snapshot->psk));
+    copy_string(psk_confidence_code, sizeof(psk_confidence_code), psk_confidence_code_from_summary(&snapshot->psk));
     copy_string(sixm_alert_code, sizeof(sixm_alert_code), sixm_alert_code_from_snapshot(snapshot, &settings));
+    copy_string(twom_assessment_code, sizeof(twom_assessment_code), psk_assessment_code_from_summary(&snapshot->twom));
+    copy_string(twom_confidence_code, sizeof(twom_confidence_code), psk_confidence_code_from_summary(&snapshot->twom));
+    copy_string(twom_alert_code, sizeof(twom_alert_code), twom_alert_code_from_snapshot(snapshot, &settings));
     copy_string(meteor_countdown_code, sizeof(meteor_countdown_code), meteor_countdown_code_from_days(snapshot->meteor.days_left));
     copy_string(tropo_category_code, sizeof(tropo_category_code), tropo_category_code_from_label(snapshot->tropo.category));
     copy_string(satellite_api_status_code, sizeof(satellite_api_status_code), satellite_api_status_code_from_label(snapshot->satellite.api_status));
 
     const char *sixm_label = sixm_alert_label_from_snapshot(snapshot, &settings);
+    const char *twom_label = twom_alert_label_from_snapshot(snapshot, &settings);
     template_token_t tokens[] = {
         {"bot_name", settings.bot_name[0] ? settings.bot_name : APP_NAME},
         {"station_name", settings.station_name},
@@ -2104,6 +2323,7 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"section_weather", snapshot->section_weather},
         {"section_tropo", snapshot->section_tropo},
         {"section_6m", snapshot->section_6m},
+        {"section_2m", snapshot->section_2m},
         {"section_solar", snapshot->section_solar},
         {"section_meteor", snapshot->section_meteor},
         {"section_satellite", snapshot->section_satellite},
@@ -2123,6 +2343,8 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"ham_muf", snapshot->hamqsl.muf},
         {"weather_level", snapshot->weather.sixm_weather_level},
         {"weather_score", weather_score},
+        {"twom_weather_level", snapshot->weather.twom_weather_level},
+        {"twom_weather_score", twom_weather_score},
         {"tropo_category", snapshot->tropo.category},
         {"tropo_category_code", tropo_category_code},
         {"tropo_score", tropo_score},
@@ -2141,11 +2363,16 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"sixm_alert_level", sixm_label},
         {"sixm_alert_level_num", sixm_alert_level_num},
         {"sixm_alert_code", sixm_alert_code},
+        {"twom_alert_level", twom_label},
+        {"twom_alert_level_num", twom_alert_level_num},
+        {"twom_alert_code", twom_alert_code},
         {"psk_mqtt_connected", psk_mqtt_connected},
         {"psk_global_spots_15m", psk_global_spots_15m},
         {"psk_global_spots_60m", psk_global_spots_60m},
         {"psk_local_spots_15m", psk_local_spots_15m},
         {"psk_local_spots_60m", psk_local_spots_60m},
+        {"psk_hamalert_hits_15m", psk_hamalert_hits_15m},
+        {"psk_hamalert_hits_60m", psk_hamalert_hits_60m},
         {"psk_longest_path_km", psk_longest_path_km},
         {"psk_best_snr", psk_best_snr},
         {"psk_score", psk_score},
@@ -2156,8 +2383,37 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"psk_latest_pair", snapshot->psk.latest_pair},
         {"psk_latest_local_time", snapshot->psk.latest_local_time},
         {"psk_matched_grids", snapshot->psk.matched_grids},
+        {"psk_hamalert_latest_time", snapshot->psk.hamalert_latest_time},
+        {"psk_hamalert_latest_text", snapshot->psk.hamalert_latest_text},
+        {"psk_hamalert_sources", snapshot->psk.hamalert_sources},
+        {"psk_hamalert_matched_grids", snapshot->psk.hamalert_matched_grids},
+        {"psk_hamalert_matched_ols", snapshot->psk.hamalert_matched_ols},
         {"psk_farthest_peer", snapshot->psk.farthest_peer},
         {"psk_farthest_grid", snapshot->psk.farthest_grid},
+        {"twom_mqtt_connected", twom_mqtt_connected},
+        {"twom_global_spots_15m", twom_global_spots_15m},
+        {"twom_global_spots_60m", twom_global_spots_60m},
+        {"twom_local_spots_15m", twom_local_spots_15m},
+        {"twom_local_spots_60m", twom_local_spots_60m},
+        {"twom_hamalert_hits_15m", twom_hamalert_hits_15m},
+        {"twom_hamalert_hits_60m", twom_hamalert_hits_60m},
+        {"twom_longest_path_km", twom_longest_path_km},
+        {"twom_best_snr", twom_best_snr},
+        {"twom_score", twom_score},
+        {"twom_assessment", snapshot->twom.assessment},
+        {"twom_assessment_code", twom_assessment_code},
+        {"twom_confidence", snapshot->twom.confidence},
+        {"twom_confidence_code", twom_confidence_code},
+        {"twom_latest_pair", snapshot->twom.latest_pair},
+        {"twom_latest_local_time", snapshot->twom.latest_local_time},
+        {"twom_matched_grids", snapshot->twom.matched_grids},
+        {"twom_hamalert_latest_time", snapshot->twom.hamalert_latest_time},
+        {"twom_hamalert_latest_text", snapshot->twom.hamalert_latest_text},
+        {"twom_hamalert_sources", snapshot->twom.hamalert_sources},
+        {"twom_hamalert_matched_grids", snapshot->twom.hamalert_matched_grids},
+        {"twom_hamalert_matched_ols", snapshot->twom.hamalert_matched_ols},
+        {"twom_farthest_peer", snapshot->twom.farthest_peer},
+        {"twom_farthest_grid", snapshot->twom.farthest_grid},
         {"ham_source_url", snapshot->hamqsl.source_url},
         {"tropo_page_url", snapshot->tropo.page_url},
         {"tropo_image_url", snapshot->tropo.image_url},
@@ -2172,8 +2428,10 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
 
     render_template(snapshot->report_text, sizeof(snapshot->report_text), settings.report_template_full, tokens, token_count);
     render_template(snapshot->report_6m, sizeof(snapshot->report_6m), settings.report_template_6m, tokens, token_count);
+    render_template(snapshot->report_2m, sizeof(snapshot->report_2m), settings.report_template_2m, tokens, token_count);
     render_template(snapshot->report_solar, sizeof(snapshot->report_solar), settings.report_template_solar, tokens, token_count);
     render_template(snapshot->report_geomag, sizeof(snapshot->report_geomag), settings.report_template_geomag, tokens, token_count);
     render_template(snapshot->report_open6m, sizeof(snapshot->report_open6m), settings.report_template_open6m, tokens, token_count);
+    render_template(snapshot->report_open2m, sizeof(snapshot->report_open2m), settings.report_template_open2m, tokens, token_count);
     render_template(snapshot->report_help, sizeof(snapshot->report_help), settings.help_template, tokens, token_count);
 }
