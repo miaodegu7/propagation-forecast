@@ -506,6 +506,9 @@ typedef struct {
     int configured;
     int enabled;
     char callsign[MAX_TEXT];
+    int account_count;
+    int enabled_accounts;
+    char account_names[MAX_HUGE_TEXT];
     char last_sync_at[MAX_TEXT];
     char last_qso_cursor[MAX_TEXT];
     char last_qsl_cursor[MAX_TEXT];
@@ -514,6 +517,23 @@ typedef struct {
     int total_qsos;
     int confirmed_qsos;
 } lotw_status_t;
+
+typedef struct {
+    int id;
+    int enabled;
+    char label[MAX_TEXT];
+    char login[MAX_TEXT];
+    char password[MAX_TEXT];
+    char station_callsign[MAX_TEXT];
+    int sync_interval_minutes;
+    int fetch_qso_enabled;
+    int fetch_qsl_enabled;
+    char last_sync_at[MAX_TEXT];
+    char last_qso_cursor[MAX_TEXT];
+    char last_qsl_cursor[MAX_TEXT];
+    char last_status[MAX_LARGE_TEXT];
+    char last_error[MAX_LARGE_TEXT];
+} lotw_account_t;
 
 typedef struct {
     int confirmed_total;
@@ -543,6 +563,9 @@ typedef struct {
     int recent_credits;
     int remaining;
     int achieved;
+    char metric_label[MAX_TEXT];
+    char detail_text[MAX_LARGE_TEXT];
+    char endorsement_text[MAX_LARGE_TEXT];
 } qrz_award_summary_t;
 
 /* 每种数据源都有自己的下次轮询时间，互不影响。 */
@@ -701,6 +724,10 @@ int storage_toggle_satellite(app_t *app, int sat_id, int enabled);
 int storage_get_state(app_t *app, const char *key, char *out, size_t out_len);
 int storage_set_state(app_t *app, const char *key, const char *value);
 int storage_load_recent_logs(app_t *app, sb_t *html_rows);
+int storage_load_lotw_accounts(app_t *app, lotw_account_t *accounts, int max_accounts, int *out_count);
+int storage_save_lotw_account(app_t *app, const lotw_account_t *account);
+int storage_delete_lotw_account(app_t *app, int account_id);
+int storage_toggle_lotw_account(app_t *app, int account_id, int enabled);
 
 /* fetch.c：对外抓取和报告生成 */
 int fetch_hamqsl_data(hamqsl_data_t *out);
@@ -739,6 +766,7 @@ int awards_load_vucc_summary(app_t *app, const char *band_key, vucc_summary_t *o
 int awards_load_qrz_summary(app_t *app, const char *award_name, qrz_award_summary_t *out);
 void awards_render_dashboard_html(app_t *app, sb_t *html);
 int awards_append_template_help(sb_t *sb);
+int awards_render_qrz_catalog(char *out, size_t out_len);
 
 /* psk.c：PSKReporter MQTT 接入与 6m 摘要分析 */
 int psk_start(app_t *app);

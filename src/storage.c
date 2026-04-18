@@ -10,6 +10,22 @@ static int exec_sql(sqlite3 *db, const char *sql) {
     return rc;
 }
 
+/* Migration helper: treat "duplicate column name" as a successful no-op. */
+static int exec_sql_allow_duplicate_column(sqlite3 *db, const char *sql) {
+    char *errmsg = NULL;
+    int rc = sqlite3_exec(db, sql, NULL, NULL, &errmsg);
+    if (rc == SQLITE_OK) {
+        return rc;
+    }
+    if (errmsg && strstr(errmsg, "duplicate column name:")) {
+        sqlite3_free(errmsg);
+        return SQLITE_OK;
+    }
+    fprintf(stderr, "sqlite error: %s\n", errmsg ? errmsg : "(unknown)");
+    sqlite3_free(errmsg);
+    return rc;
+}
+
 static int upsert_default(sqlite3 *db, const char *key, const char *value) {
     sqlite3_stmt *stmt = NULL;
     const char *sql = "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)";
@@ -361,6 +377,22 @@ int storage_init(app_t *app, const char *db_path) {
         " level TEXT NOT NULL,"
         " message TEXT NOT NULL"
         ");"
+        "CREATE TABLE IF NOT EXISTS lotw_accounts ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " label TEXT NOT NULL DEFAULT '',"
+        " enabled INTEGER NOT NULL DEFAULT 1,"
+        " login TEXT NOT NULL DEFAULT '',"
+        " password TEXT NOT NULL DEFAULT '',"
+        " station_callsign TEXT NOT NULL DEFAULT '',"
+        " sync_interval_minutes INTEGER NOT NULL DEFAULT 180,"
+        " fetch_qso_enabled INTEGER NOT NULL DEFAULT 1,"
+        " fetch_qsl_enabled INTEGER NOT NULL DEFAULT 1,"
+        " last_sync_at TEXT NOT NULL DEFAULT '',"
+        " last_qso_cursor TEXT NOT NULL DEFAULT '',"
+        " last_qsl_cursor TEXT NOT NULL DEFAULT '',"
+        " last_status TEXT NOT NULL DEFAULT '',"
+        " last_error TEXT NOT NULL DEFAULT ''"
+        ");"
         "CREATE TABLE IF NOT EXISTS logbook_qsos ("
         " id INTEGER PRIMARY KEY AUTOINCREMENT,"
         " source TEXT NOT NULL DEFAULT 'lotw',"
@@ -382,6 +414,8 @@ int storage_init(app_t *app, const char *db_path) {
         " dxcc_status TEXT NOT NULL DEFAULT '',"
         " country TEXT NOT NULL DEFAULT '',"
         " continent TEXT NOT NULL DEFAULT '',"
+        " us_state TEXT NOT NULL DEFAULT '',"
+        " county TEXT NOT NULL DEFAULT '',"
         " gridsquare TEXT NOT NULL DEFAULT '',"
         " vucc_grids TEXT NOT NULL DEFAULT '',"
         " credit_granted TEXT NOT NULL DEFAULT '',"
@@ -401,6 +435,9 @@ int storage_init(app_t *app, const char *db_path) {
         app->db = NULL;
         return -1;
     }
+
+    exec_sql_allow_duplicate_column(app->db, "ALTER TABLE logbook_qsos ADD COLUMN us_state TEXT NOT NULL DEFAULT '';");
+    exec_sql_allow_duplicate_column(app->db, "ALTER TABLE logbook_qsos ADD COLUMN county TEXT NOT NULL DEFAULT '';");
 
     if (seed_defaults(app->db) != SQLITE_OK) {
         app_set_last_error(app, "数据库默认数据初始化失败: %s", sqlite3_errmsg(app->db));
