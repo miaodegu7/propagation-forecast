@@ -2215,20 +2215,51 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char ham_solarflux[32];
     char ham_aindex[32];
     char ham_kindex[32];
+    char ham_kindex_text[MAX_TEXT];
     char ham_sunspots[32];
+    char ham_aurora[32];
+    char ham_solarwind[32];
+    char ham_magneticfield[32];
     char ham_geomag_g[32];
+    char weather_is_day[8];
+    char temperature_c[32];
+    char humidity[32];
+    char dewpoint_c[32];
+    char pressure_hpa[32];
+    char cloud_cover[32];
+    char visibility_m[32];
+    char wind_kmh[32];
+    char cape[32];
+    char lifted_index[32];
+    char precipitation_probability[32];
+    char daylight_hours[32];
+    char tmax_c[32];
+    char tmin_c[32];
+    char daily_precip_probability[32];
     char weather_score[32];
     char twom_weather_score[32];
+    char tropo_hours[32];
     char tropo_score[32];
+    char tropo_sample_r[32];
+    char tropo_sample_g[32];
+    char tropo_sample_b[32];
     char meteor_days_left[32];
     char ham_updated[MAX_TEXT];
+    char ham_source_name[MAX_TEXT];
     char ham_geomagfield_text[MAX_TEXT];
+    char tropo_image_cq[MAX_LARGE_TEXT + 32];
+    char hamqsl_widget_cq[MAX_LARGE_TEXT + 32];
     char hf_day[512];
     char hf_night[512];
     char meteor_name_cn[MAX_TEXT];
     char peak_date_cn[MAX_TEXT];
     char countdown_text[MAX_TEXT];
     char moon_percent_text[32];
+    char satellite_api_configured[8];
+    char satellite_selected_count[32];
+    char satellite_api_successes[32];
+    char satellite_api_requests[32];
+    char satellite_pass_count[32];
     char psk_mqtt_connected[8];
     char psk_global_spots_15m[32];
     char psk_global_spots_60m[32];
@@ -2260,17 +2291,99 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     char meteor_countdown_code[MAX_TEXT];
     char tropo_category_code[MAX_TEXT];
     char satellite_api_status_code[MAX_TEXT];
+    const char *ham_source_url;
+    const char *tropo_source_url;
+    const char *meteor_source_url;
+    const char *satellite_source_url;
+    const char *ham_kindex_text_value;
+    const char *ham_geomagfield_value;
+    const char *ham_source_name_value;
+    const char *weather_level_value;
+    const char *twom_weather_level_value;
+    const char *tropo_category_value;
+    const char *meteor_name_value;
+    const char *meteor_name_cn_value;
+    const char *peak_date_value;
+    const char *peak_date_cn_value;
+    const char *psk_assessment_value;
+    const char *psk_confidence_value;
+    const char *twom_assessment_value;
+    const char *twom_confidence_value;
+    const char *psk_latest_pair_value;
+    const char *twom_latest_pair_value;
+    const char *psk_hamalert_latest_text_value;
+    const char *twom_hamalert_latest_text_value;
+    const char *psk_hamalert_latest_time_value;
+    const char *twom_hamalert_latest_time_value;
+    const char *sun_summary_value;
+
+    memset(ham_kindex_text, 0, sizeof(ham_kindex_text));
+    memset(ham_aurora, 0, sizeof(ham_aurora));
+    memset(ham_solarwind, 0, sizeof(ham_solarwind));
+    memset(ham_magneticfield, 0, sizeof(ham_magneticfield));
+    memset(weather_is_day, 0, sizeof(weather_is_day));
+    memset(temperature_c, 0, sizeof(temperature_c));
+    memset(humidity, 0, sizeof(humidity));
+    memset(dewpoint_c, 0, sizeof(dewpoint_c));
+    memset(pressure_hpa, 0, sizeof(pressure_hpa));
+    memset(cloud_cover, 0, sizeof(cloud_cover));
+    memset(visibility_m, 0, sizeof(visibility_m));
+    memset(wind_kmh, 0, sizeof(wind_kmh));
+    memset(cape, 0, sizeof(cape));
+    memset(lifted_index, 0, sizeof(lifted_index));
+    memset(precipitation_probability, 0, sizeof(precipitation_probability));
+    memset(daylight_hours, 0, sizeof(daylight_hours));
+    memset(tmax_c, 0, sizeof(tmax_c));
+    memset(tmin_c, 0, sizeof(tmin_c));
+    memset(daily_precip_probability, 0, sizeof(daily_precip_probability));
+    memset(tropo_hours, 0, sizeof(tropo_hours));
+    memset(tropo_sample_r, 0, sizeof(tropo_sample_r));
+    memset(tropo_sample_g, 0, sizeof(tropo_sample_g));
+    memset(tropo_sample_b, 0, sizeof(tropo_sample_b));
+    memset(ham_source_name, 0, sizeof(ham_source_name));
+    memset(tropo_image_cq, 0, sizeof(tropo_image_cq));
+    memset(hamqsl_widget_cq, 0, sizeof(hamqsl_widget_cq));
+    memset(satellite_api_configured, 0, sizeof(satellite_api_configured));
+    memset(satellite_selected_count, 0, sizeof(satellite_selected_count));
+    memset(satellite_api_successes, 0, sizeof(satellite_api_successes));
+    memset(satellite_api_requests, 0, sizeof(satellite_api_requests));
+    memset(satellite_pass_count, 0, sizeof(satellite_pass_count));
+
     format_time_local(snapshot->refreshed_at, refreshed, sizeof(refreshed));
     snprintf(ham_solarflux, sizeof(ham_solarflux), "%d", snapshot->hamqsl.solarflux);
     snprintf(ham_aindex, sizeof(ham_aindex), "%d", snapshot->hamqsl.aindex);
     snprintf(ham_kindex, sizeof(ham_kindex), "%d", snapshot->hamqsl.kindex);
+    copy_string(ham_kindex_text, sizeof(ham_kindex_text), snapshot->hamqsl.kindex_text);
     snprintf(ham_sunspots, sizeof(ham_sunspots), "%d", snapshot->hamqsl.sunspots);
+    snprintf(ham_aurora, sizeof(ham_aurora), "%d", snapshot->hamqsl.aurora);
+    snprintf(ham_solarwind, sizeof(ham_solarwind), "%.1f", snapshot->hamqsl.solarwind);
+    snprintf(ham_magneticfield, sizeof(ham_magneticfield), "%.1f", snapshot->hamqsl.magneticfield);
     snprintf(ham_geomag_g, sizeof(ham_geomag_g), "%d", geomag_g_from_k(snapshot->hamqsl.kindex));
+    snprintf(weather_is_day, sizeof(weather_is_day), "%d", snapshot->weather.is_day ? 1 : 0);
+    snprintf(temperature_c, sizeof(temperature_c), "%.1f", snapshot->weather.temperature_c);
+    snprintf(humidity, sizeof(humidity), "%d", snapshot->weather.humidity);
+    snprintf(dewpoint_c, sizeof(dewpoint_c), "%.1f", snapshot->weather.dewpoint_c);
+    snprintf(pressure_hpa, sizeof(pressure_hpa), "%.1f", snapshot->weather.pressure_hpa);
+    snprintf(cloud_cover, sizeof(cloud_cover), "%d", snapshot->weather.cloud_cover);
+    snprintf(visibility_m, sizeof(visibility_m), "%.0f", snapshot->weather.visibility_m);
+    snprintf(wind_kmh, sizeof(wind_kmh), "%.1f", snapshot->weather.wind_kmh);
+    snprintf(cape, sizeof(cape), "%.0f", snapshot->weather.cape);
+    snprintf(lifted_index, sizeof(lifted_index), "%.1f", snapshot->weather.lifted_index);
+    snprintf(precipitation_probability, sizeof(precipitation_probability), "%d", snapshot->weather.precipitation_probability);
+    snprintf(daylight_hours, sizeof(daylight_hours), "%.1f", snapshot->weather.daylight_hours);
+    snprintf(tmax_c, sizeof(tmax_c), "%.1f", snapshot->weather.tmax_c);
+    snprintf(tmin_c, sizeof(tmin_c), "%.1f", snapshot->weather.tmin_c);
+    snprintf(daily_precip_probability, sizeof(daily_precip_probability), "%d", snapshot->weather.daily_precip_probability);
     snprintf(weather_score, sizeof(weather_score), "%d", snapshot->weather.sixm_weather_score);
     snprintf(twom_weather_score, sizeof(twom_weather_score), "%d", snapshot->weather.twom_weather_score);
+    snprintf(tropo_hours, sizeof(tropo_hours), "%d", snapshot->tropo.horizon_hours);
     snprintf(tropo_score, sizeof(tropo_score), "%d", snapshot->tropo.score);
+    snprintf(tropo_sample_r, sizeof(tropo_sample_r), "%d", snapshot->tropo.sample_r);
+    snprintf(tropo_sample_g, sizeof(tropo_sample_g), "%d", snapshot->tropo.sample_g);
+    snprintf(tropo_sample_b, sizeof(tropo_sample_b), "%d", snapshot->tropo.sample_b);
     snprintf(meteor_days_left, sizeof(meteor_days_left), "%d", snapshot->meteor.days_left);
     copy_string(ham_updated, sizeof(ham_updated), snapshot->hamqsl.valid ? snapshot->hamqsl.updated : "");
+    copy_string(ham_source_name, sizeof(ham_source_name), snapshot->hamqsl.source_name);
     copy_string(ham_geomagfield_text, sizeof(ham_geomagfield_text),
         snapshot->hamqsl.valid ? snapshot->hamqsl.geomagfield : "");
     build_band_summary_text(&snapshot->hamqsl, "day", hf_day, sizeof(hf_day));
@@ -2310,6 +2423,48 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
     copy_string(meteor_countdown_code, sizeof(meteor_countdown_code), meteor_countdown_code_from_days(snapshot->meteor.days_left));
     copy_string(tropo_category_code, sizeof(tropo_category_code), tropo_category_code_from_label(snapshot->tropo.category));
     copy_string(satellite_api_status_code, sizeof(satellite_api_status_code), satellite_api_status_code_from_label(snapshot->satellite.api_status));
+    snprintf(satellite_api_configured, sizeof(satellite_api_configured), "%d", snapshot->satellite.api_configured ? 1 : 0);
+    snprintf(satellite_selected_count, sizeof(satellite_selected_count), "%d", snapshot->satellite.selected_satellites);
+    snprintf(satellite_api_successes, sizeof(satellite_api_successes), "%d", snapshot->satellite.api_successes);
+    snprintf(satellite_api_requests, sizeof(satellite_api_requests), "%d", snapshot->satellite.api_requests);
+    snprintf(satellite_pass_count, sizeof(satellite_pass_count), "%d", snapshot->satellite.pass_count);
+    if (settings.tropo_send_image && snapshot->tropo.image_url[0]) {
+        snprintf(tropo_image_cq, sizeof(tropo_image_cq), "[CQ:image,file=%s]", snapshot->tropo.image_url);
+    }
+    if (settings.include_hamqsl_widget && settings.hamqsl_widget_url[0]) {
+        snprintf(hamqsl_widget_cq, sizeof(hamqsl_widget_cq), "[CQ:image,file=%s]", settings.hamqsl_widget_url);
+    }
+
+    ham_source_url = snapshot->hamqsl.source_url[0] ? snapshot->hamqsl.source_url : "https://www.hamqsl.com/solarxml.php";
+    tropo_source_url = snapshot->tropo.page_url[0] ? snapshot->tropo.page_url : settings.tropo_source_url;
+    meteor_source_url = snapshot->meteor.source_url[0] ? snapshot->meteor.source_url : settings.meteor_source_url;
+    satellite_source_url = snapshot->satellite.source_url[0] ? snapshot->satellite.source_url : settings.satellite_source_url;
+    ham_kindex_text_value = text_or_default(ham_kindex_text, ham_kindex);
+    ham_geomagfield_value = text_or_default(snapshot->hamqsl.geomagfield,
+        text_or_default(ham_geomagfield_text, "未报"));
+    ham_source_name_value = text_or_default(ham_source_name, "HAMqsl");
+    weather_level_value = text_or_default(snapshot->weather.sixm_weather_level, "未知");
+    twom_weather_level_value = text_or_default(snapshot->weather.twom_weather_level, "未知");
+    tropo_category_value = text_or_default(snapshot->tropo.category, "未知");
+    meteor_name_value = text_or_default(snapshot->meteor.shower_name, "未获取");
+    meteor_name_cn_value = text_or_default(meteor_name_cn, meteor_name_value);
+    peak_date_value = text_or_default(snapshot->meteor.peak_label, "-");
+    peak_date_cn_value = text_or_default(peak_date_cn, peak_date_value);
+    psk_assessment_value = text_or_default(snapshot->psk.assessment,
+        text_or_default(settings.wording_psk_assessment_disconnected, "实时数据未连接"));
+    psk_confidence_value = text_or_default(snapshot->psk.confidence,
+        text_or_default(settings.wording_psk_confidence_unknown, "未知"));
+    twom_assessment_value = text_or_default(snapshot->twom.assessment,
+        text_or_default(settings.wording_psk_assessment_disconnected, "实时数据未连接"));
+    twom_confidence_value = text_or_default(snapshot->twom.confidence,
+        text_or_default(settings.wording_psk_confidence_unknown, "未知"));
+    psk_latest_pair_value = text_or_default(snapshot->psk.latest_pair, "-");
+    twom_latest_pair_value = text_or_default(snapshot->twom.latest_pair, "-");
+    psk_hamalert_latest_text_value = text_or_default(snapshot->psk.hamalert_latest_text, "-");
+    twom_hamalert_latest_text_value = text_or_default(snapshot->twom.hamalert_latest_text, "-");
+    psk_hamalert_latest_time_value = text_or_default(snapshot->psk.hamalert_latest_time, "-");
+    twom_hamalert_latest_time_value = text_or_default(snapshot->twom.hamalert_latest_time, "-");
+    sun_summary_value = text_or_default(snapshot->sun_summary, "太阳与地磁状态暂不可用");
 
     const char *sixm_label = sixm_alert_label_from_snapshot(snapshot, &settings);
     const char *twom_label = twom_alert_label_from_snapshot(snapshot, &settings);
@@ -2329,36 +2484,74 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"section_satellite", snapshot->section_satellite},
         {"section_sources", snapshot->section_sources},
         {"analysis_summary", snapshot->analysis_summary},
+        {"sun_summary", sun_summary_value},
         {"updated", ham_updated},
         {"kindex", ham_kindex},
-        {"geomagfield", ham_geomagfield_text},
+        {"geomagfield", ham_geomagfield_value},
         {"hf_day", hf_day},
         {"hf_night", hf_night},
         {"ham_solarflux", ham_solarflux},
         {"ham_aindex", ham_aindex},
         {"ham_kindex", ham_kindex},
+        {"kindex_text", ham_kindex_text_value},
+        {"ham_kindex_text", ham_kindex_text_value},
         {"ham_xray", snapshot->hamqsl.xray},
         {"ham_sunspots", ham_sunspots},
-        {"ham_geomagfield", snapshot->hamqsl.geomagfield},
+        {"ham_aurora", ham_aurora},
+        {"ham_solarwind", ham_solarwind},
+        {"ham_magneticfield", ham_magneticfield},
+        {"ham_geomagfield", ham_geomagfield_value},
         {"ham_muf", snapshot->hamqsl.muf},
-        {"weather_level", snapshot->weather.sixm_weather_level},
+        {"ham_signalnoise", snapshot->hamqsl.signalnoise},
+        {"ham_fof2", snapshot->hamqsl.fof2},
+        {"ham_muffactor", snapshot->hamqsl.muffactor},
+        {"ham_source_name", ham_source_name_value},
+        {"weather_current_time", snapshot->weather.current_time},
+        {"weather_is_day", weather_is_day},
+        {"temperature_c", temperature_c},
+        {"humidity", humidity},
+        {"dewpoint_c", dewpoint_c},
+        {"pressure_hpa", pressure_hpa},
+        {"cloud_cover", cloud_cover},
+        {"visibility_m", visibility_m},
+        {"wind_kmh", wind_kmh},
+        {"cape", cape},
+        {"lifted_index", lifted_index},
+        {"precipitation_probability", precipitation_probability},
+        {"sunrise", snapshot->weather.sunrise},
+        {"sunset", snapshot->weather.sunset},
+        {"daylight_hours", daylight_hours},
+        {"tmax_c", tmax_c},
+        {"tmin_c", tmin_c},
+        {"daily_precip_probability", daily_precip_probability},
+        {"weather_level", weather_level_value},
+        {"sixm_weather_level", weather_level_value},
         {"weather_score", weather_score},
-        {"twom_weather_level", snapshot->weather.twom_weather_level},
+        {"sixm_weather_score", weather_score},
+        {"twom_weather_level", twom_weather_level_value},
         {"twom_weather_score", twom_weather_score},
-        {"tropo_category", snapshot->tropo.category},
+        {"tropo_hours", tropo_hours},
+        {"tropo_category", tropo_category_value},
         {"tropo_category_code", tropo_category_code},
         {"tropo_score", tropo_score},
-        {"meteor_name", snapshot->meteor.shower_name},
-        {"meteor_name_cn", meteor_name_cn},
-        {"peak_date", snapshot->meteor.peak_label},
-        {"peak_date_cn", peak_date_cn},
-        {"meteor_peak", snapshot->meteor.peak_label},
+        {"tropo_sample_r", tropo_sample_r},
+        {"tropo_sample_g", tropo_sample_g},
+        {"tropo_sample_b", tropo_sample_b},
+        {"tropo_summary", snapshot->tropo.summary},
+        {"tropo_image_cq", tropo_image_cq},
+        {"meteor_name", meteor_name_value},
+        {"meteor_name_cn", meteor_name_cn_value},
+        {"peak_date", peak_date_value},
+        {"peak_date_cn", peak_date_cn_value},
+        {"meteor_peak", peak_date_value},
         {"meteor_days_left", meteor_days_left},
         {"days_left", meteor_days_left},
         {"countdown_text", countdown_text},
         {"meteor_countdown_code", meteor_countdown_code},
         {"moon_percent", moon_percent_text},
+        {"meteor_summary", snapshot->meteor.summary},
         {"hamqsl_widget_url", settings.hamqsl_widget_url},
+        {"hamqsl_widget_cq", hamqsl_widget_cq},
         {"geomag_g", ham_geomag_g},
         {"sixm_alert_level", sixm_label},
         {"sixm_alert_level_num", sixm_alert_level_num},
@@ -2376,15 +2569,15 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"psk_longest_path_km", psk_longest_path_km},
         {"psk_best_snr", psk_best_snr},
         {"psk_score", psk_score},
-        {"psk_assessment", snapshot->psk.assessment},
+        {"psk_assessment", psk_assessment_value},
         {"psk_assessment_code", psk_assessment_code},
-        {"psk_confidence", snapshot->psk.confidence},
+        {"psk_confidence", psk_confidence_value},
         {"psk_confidence_code", psk_confidence_code},
-        {"psk_latest_pair", snapshot->psk.latest_pair},
+        {"psk_latest_pair", psk_latest_pair_value},
         {"psk_latest_local_time", snapshot->psk.latest_local_time},
         {"psk_matched_grids", snapshot->psk.matched_grids},
-        {"psk_hamalert_latest_time", snapshot->psk.hamalert_latest_time},
-        {"psk_hamalert_latest_text", snapshot->psk.hamalert_latest_text},
+        {"psk_hamalert_latest_time", psk_hamalert_latest_time_value},
+        {"psk_hamalert_latest_text", psk_hamalert_latest_text_value},
         {"psk_hamalert_sources", snapshot->psk.hamalert_sources},
         {"psk_hamalert_matched_grids", snapshot->psk.hamalert_matched_grids},
         {"psk_hamalert_matched_ols", snapshot->psk.hamalert_matched_ols},
@@ -2400,29 +2593,35 @@ void build_reports(app_t *app, snapshot_t *snapshot) {
         {"twom_longest_path_km", twom_longest_path_km},
         {"twom_best_snr", twom_best_snr},
         {"twom_score", twom_score},
-        {"twom_assessment", snapshot->twom.assessment},
+        {"twom_assessment", twom_assessment_value},
         {"twom_assessment_code", twom_assessment_code},
-        {"twom_confidence", snapshot->twom.confidence},
+        {"twom_confidence", twom_confidence_value},
         {"twom_confidence_code", twom_confidence_code},
-        {"twom_latest_pair", snapshot->twom.latest_pair},
+        {"twom_latest_pair", twom_latest_pair_value},
         {"twom_latest_local_time", snapshot->twom.latest_local_time},
         {"twom_matched_grids", snapshot->twom.matched_grids},
-        {"twom_hamalert_latest_time", snapshot->twom.hamalert_latest_time},
-        {"twom_hamalert_latest_text", snapshot->twom.hamalert_latest_text},
+        {"twom_hamalert_latest_time", twom_hamalert_latest_time_value},
+        {"twom_hamalert_latest_text", twom_hamalert_latest_text_value},
         {"twom_hamalert_sources", snapshot->twom.hamalert_sources},
         {"twom_hamalert_matched_grids", snapshot->twom.hamalert_matched_grids},
         {"twom_hamalert_matched_ols", snapshot->twom.hamalert_matched_ols},
         {"twom_farthest_peer", snapshot->twom.farthest_peer},
         {"twom_farthest_grid", snapshot->twom.farthest_grid},
-        {"ham_source_url", snapshot->hamqsl.source_url},
         {"tropo_page_url", snapshot->tropo.page_url},
         {"tropo_image_url", snapshot->tropo.image_url},
-        {"meteor_source_url", snapshot->meteor.source_url},
         {"satellite_api_status", snapshot->satellite.api_status},
         {"satellite_api_status_code", satellite_api_status_code},
+        {"satellite_api_configured", satellite_api_configured},
+        {"satellite_selected_count", satellite_selected_count},
+        {"satellite_api_successes", satellite_api_successes},
+        {"satellite_api_requests", satellite_api_requests},
+        {"satellite_pass_count", satellite_pass_count},
         {"satellite_selected_names", snapshot->satellite.selected_names},
         {"satellite_summary", snapshot->satellite.summary},
-        {"satellite_source_url", snapshot->satellite.source_url}
+        {"ham_source_url", ham_source_url},
+        {"tropo_source_url", tropo_source_url},
+        {"meteor_source_url", meteor_source_url},
+        {"satellite_source_url", satellite_source_url}
     };
     size_t token_count = sizeof(tokens) / sizeof(tokens[0]);
 
