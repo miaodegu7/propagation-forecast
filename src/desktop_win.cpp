@@ -21,6 +21,7 @@ static HWND g_send_6m_button = nullptr;
 static HWND g_send_2m_button = nullptr;
 static HFONT g_font = nullptr;
 static PROCESS_INFORMATION g_backend = {};
+static bool g_reported_backend_exit = false;
 
 static std::wstring utf8_to_wide(const std::string &text) {
     if (text.empty()) {
@@ -108,6 +109,14 @@ static bool backend_running(void) {
     }
     DWORD wait = WaitForSingleObject(g_backend.hProcess, 0);
     return wait == WAIT_TIMEOUT;
+}
+
+static DWORD backend_exit_code(void) {
+    DWORD exit_code = 0;
+    if (g_backend.hProcess && GetExitCodeProcess(g_backend.hProcess, &exit_code)) {
+        return exit_code;
+    }
+    return 0;
 }
 
 static void close_backend_handles(void) {
@@ -203,6 +212,7 @@ static void start_backend(void) {
         return;
     }
     close_backend_handles();
+    g_reported_backend_exit = false;
 
     std::wstring backend_path = exe_dir() + L"\\propagation_bot.exe";
     if (!file_exists(backend_path)) {
@@ -218,19 +228,41 @@ static void start_backend(void) {
 
     STARTUPINFOW startup = {};
     startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
     startup.wShowWindow = SW_HIDE;
 
+    std::wstring stdout_path = exe_dir() + L"\\desktop-backend.stdout.log";
+    std::wstring stderr_path = exe_dir() + L"\\desktop-backend.stderr.log";
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE stdout_file = CreateFileW(stdout_path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, &sa,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE stderr_file = CreateFileW(stderr_path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, &sa,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    startup.hStdOutput = stdout_file != INVALID_HANDLE_VALUE ? stdout_file : GetStdHandle(STD_OUTPUT_HANDLE);
+    startup.hStdError = stderr_file != INVALID_HANDLE_VALUE ? stderr_file : GetStdHandle(STD_ERROR_HANDLE);
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
     PROCESS_INFORMATION proc = {};
-    BOOL ok = CreateProcessW(backend_path.c_str(), mutable_cmd.data(), nullptr, nullptr, FALSE,
+    BOOL ok = CreateProcessW(backend_path.c_str(), mutable_cmd.data(), nullptr, nullptr, TRUE,
         CREATE_NO_WINDOW, nullptr, exe_dir().c_str(), &startup, &proc);
+    if (stdout_file != INVALID_HANDLE_VALUE) {
+        CloseHandle(stdout_file);
+    }
+    if (stderr_file != INVALID_HANDLE_VALUE) {
+        CloseHandle(stderr_file);
+    }
     if (!ok) {
         append_log(L"后台启动失败，错误码=" + std::to_wstring(GetLastError()));
+        append_log(L"后台路径：" + backend_path);
         set_status(L"后台启动失败");
         return;
     }
     g_backend = proc;
     append_log(L"后台已启动：http://127.0.0.1:" + std::to_wstring(APP_PORT) + L"/");
+    append_log(L"后台进程 ID：" + std::to_wstring(g_backend.dwProcessId));
+    append_log(L"工作目录：" + exe_dir());
     set_status(L"后台启动中");
 }
 
@@ -256,6 +288,12 @@ static void open_web_ui(void) {
 
 static void refresh_status(void) {
     if (!backend_running()) {
+        if (g_backend.hProcess && !g_reported_backend_exit) {
+            DWORD exit_code = backend_exit_code();
+            append_log(L"后台进程已退出，退出码=" + std::to_wstring(exit_code));
+            append_log(L"可查看 desktop-backend.stderr.log 和 propagation_bot.log");
+            g_reported_backend_exit = true;
+        }
         close_backend_handles();
         set_status(L"后台未运行");
         EnableWindow(g_start_button, TRUE);
