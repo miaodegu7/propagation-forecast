@@ -9,6 +9,7 @@ from pathlib import Path
 
 SYSTEM_DLLS = {
     "advapi32.dll",
+    "authz.dll",
     "bcrypt.dll",
     "bcryptprimitives.dll",
     "cfgmgr32.dll",
@@ -17,13 +18,20 @@ SYSTEM_DLLS = {
     "cryptui.dll",
     "dhcpcsvc.dll",
     "dnsapi.dll",
+    "d3d11.dll",
+    "d3d12.dll",
     "gdi32.dll",
     "gdiplus.dll",
+    "dwmapi.dll",
+    "dwrite.dll",
+    "dxgi.dll",
     "iphlpapi.dll",
     "kernel32.dll",
+    "mpr.dll",
     "msvcrt.dll",
     "ntdll.dll",
     "ncrypt.dll",
+    "netapi32.dll",
     "normaliz.dll",
     "ole32.dll",
     "oleaut32.dll",
@@ -32,6 +40,10 @@ SYSTEM_DLLS = {
     "setupapi.dll",
     "shell32.dll",
     "shlwapi.dll",
+    "usp10.dll",
+    "uxtheme.dll",
+    "version.dll",
+    "winhttp.dll",
     "ucrtbase.dll",
     "user32.dll",
     "userenv.dll",
@@ -47,9 +59,22 @@ def is_system_dll(name: str) -> bool:
     return key in SYSTEM_DLLS or key.startswith("api-ms-win-") or key.startswith("ext-ms-win-")
 
 
-def list_dlls(binary: Path) -> list[str]:
+def find_objdump(search_dir: Path) -> str | None:
+    candidates = [
+        shutil.which("objdump"),
+        str(search_dir / "objdump.exe"),
+        str(search_dir.parent / "x86_64-w64-mingw32" / "bin" / "objdump.exe"),
+        str(search_dir.parent.parent / "usr" / "bin" / "objdump.exe"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def list_dlls(binary: Path, objdump: str) -> list[str]:
     result = subprocess.run(
-        ["objdump", "-p", str(binary)],
+        [objdump, "-p", str(binary)],
         check=True,
         capture_output=True,
         text=True,
@@ -64,7 +89,7 @@ def list_dlls(binary: Path) -> list[str]:
     return dlls
 
 
-def copy_tree_dependencies(root_binary: Path, out_dir: Path, search_dir: Path) -> int:
+def copy_tree_dependencies(root_binary: Path, out_dir: Path, search_dir: Path, objdump: str) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root_binary, out_dir / root_binary.name)
 
@@ -80,7 +105,7 @@ def copy_tree_dependencies(root_binary: Path, out_dir: Path, search_dir: Path) -
             continue
         visited.add(binary.name.lower())
 
-        for dll_name in list_dlls(binary):
+        for dll_name in list_dlls(binary, objdump):
             key = dll_name.lower()
             if is_system_dll(key) or key in copied:
                 continue
@@ -113,7 +138,12 @@ def main() -> int:
         print(f"missing dll directory: {search_dir}", file=sys.stderr)
         return 2
 
-    missing = copy_tree_dependencies(root_binary, out_dir, search_dir)
+    objdump = find_objdump(search_dir)
+    if objdump is None:
+        print("missing objdump: install MSYS2 binutils or add objdump.exe to PATH", file=sys.stderr)
+        return 2
+
+    missing = copy_tree_dependencies(root_binary, out_dir, search_dir, objdump)
     if missing:
         print(f"packaged with {missing} unresolved dependencies", file=sys.stderr)
     return 0

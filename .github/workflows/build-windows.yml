@@ -32,6 +32,8 @@ jobs:
             mingw-w64-ucrt-x86_64-curl
             mingw-w64-ucrt-x86_64-sqlite3
             mingw-w64-ucrt-x86_64-mosquitto
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
 
       - name: Build package
         id: build
@@ -52,26 +54,35 @@ jobs:
             make clean
             echo "[static] make STATIC=1 EXEEXT=.exe"
             make STATIC=1 EXEEXT=.exe
+            echo "[static] make qt-desktop"
+            make EXEEXT=.exe qt-desktop
           } > "$static_log" 2>&1; then
             cp propagation_bot.exe dist/
             cp propagation_desktop.exe dist/
+            python .github/scripts/package_windows.py propagation_qt_desktop.exe dist "$MINGW_PREFIX/bin"
+            windeployqt6 --no-translations --no-compiler-runtime dist/propagation_qt_desktop.exe
             build_ok=true
             single_file=true
             artifact_name="propagation-bot-windows-single-exe"
           else
             rm -f propagation_bot.exe
             rm -f propagation_desktop.exe
+            rm -f propagation_qt_desktop.exe
             {
               echo "[dynamic] make clean"
               make clean
               echo "[dynamic] make EXEEXT=.exe"
               make EXEEXT=.exe
+              echo "[dynamic] make qt-desktop"
+              make EXEEXT=.exe qt-desktop
               echo "[dynamic] package dependencies"
               python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
               cp propagation_desktop.exe dist/
+              python .github/scripts/package_windows.py propagation_qt_desktop.exe dist "$MINGW_PREFIX/bin"
+              windeployqt6 --no-translations --no-compiler-runtime dist/propagation_qt_desktop.exe
             } > "$dynamic_log" 2>&1 || true
 
-            if [ -f dist/propagation_bot.exe ] && [ -f dist/propagation_desktop.exe ]; then
+            if [ -f dist/propagation_bot.exe ] && [ -f dist/propagation_desktop.exe ] && [ -f dist/propagation_qt_desktop.exe ]; then
               build_ok=true
               single_file=false
               artifact_name="propagation-bot-windows-portable"

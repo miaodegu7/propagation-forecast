@@ -1,4 +1,8 @@
 propagation_bot
+propagation_desktop
+propagation_qt_desktop
+dist/
+dist-*/
 *.o
 *.obj
 *.exe
@@ -9,5 +13,7 @@ propagation_bot
 *.db
 *.sqlite
 *.sqlite3
+*.log
+.vs/
 .DS_Store
 Thumbs.db
