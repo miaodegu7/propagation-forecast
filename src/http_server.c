@@ -1550,7 +1550,7 @@ int http_server_run(app_t *app) {
         ctx->app = app;
         ctx->client_fd = client_fd;
         pthread_t thread;
-        if (pthread_create(&thread, NULL, client_thread, ctx) == 0) {
+        if (app_create_thread(&thread, client_thread, ctx, 8 * 1024 * 1024) == 0) {
             pthread_detach(thread);
         } else {
             close(client_fd);

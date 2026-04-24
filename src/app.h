@@ -694,6 +694,7 @@ void app_open_admin_console(const settings_t *settings);
 void app_write_boot_log(const char *fmt, ...);
 void app_set_last_error(app_t *app, const char *fmt, ...);
 void app_show_startup_error(const char *title, const char *message);
+int app_create_thread(pthread_t *thread, void *(*start_routine)(void *), void *arg, size_t stack_size);
 int app_capture_html_to_png(const char *html_utf8, const char *stem, unsigned char **png_data, size_t *png_size, char *detail, size_t detail_len);
 int app_render_template(char *out, size_t out_len, const char *tmpl, const template_token_t *tokens, size_t token_count);
 #ifdef _WIN32

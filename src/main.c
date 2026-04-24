@@ -203,8 +203,11 @@ int main(int argc, char **argv) {
     app_request_refresh_async(app, 1, 1, "startup");
     apply_runtime_network_overrides(app, bind_override, port_override);
 
-    pthread_t scheduler;
-    pthread_create(&scheduler, NULL, scheduler_thread, app);
+    pthread_t scheduler = 0;
+    if (app_create_thread(&scheduler, scheduler_thread, app, 8 * 1024 * 1024) != 0) {
+        app_set_last_error(app, "定时线程启动失败");
+        app->running = 0;
+    }
 
     int server_rc = http_server_run(app);
     app_log(app, server_rc == 0 ? "WARN" : "ERROR", "HTTP 服务主循环结束，server_rc=%d", server_rc);
@@ -216,7 +219,9 @@ int main(int argc, char **argv) {
     }
 
     app->running = 0;
-    pthread_join(scheduler, NULL);
+    if (scheduler) {
+        pthread_join(scheduler, NULL);
+    }
     psk_stop(app);
 
     sqlite3_close(app->db);

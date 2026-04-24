@@ -516,7 +516,7 @@ int app_request_refresh_async(app_t *app, int force, int reset_schedule, const c
     copy_string(task->reason, sizeof(task->reason), reason_copy);
 
     pthread_t thread;
-    if (pthread_create(&thread, NULL, async_refresh_thread, task) != 0) {
+    if (app_create_thread(&thread, async_refresh_thread, task, 16 * 1024 * 1024) != 0) {
         pthread_mutex_lock(&app->async_mutex);
         app->async_refresh_running = 0;
         app->async_refresh_last_rc = -1;

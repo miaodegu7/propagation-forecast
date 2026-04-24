@@ -725,6 +725,20 @@ void app_show_startup_error(const char *title, const char *message) {
 #endif
 }
 
+int app_create_thread(pthread_t *thread, void *(*start_routine)(void *), void *arg, size_t stack_size) {
+    pthread_attr_t attr;
+    int rc = pthread_attr_init(&attr);
+    if (rc != 0) {
+        return pthread_create(thread, NULL, start_routine, arg);
+    }
+    if (stack_size > 0) {
+        (void)pthread_attr_setstacksize(&attr, stack_size);
+    }
+    rc = pthread_create(thread, &attr, start_routine, arg);
+    pthread_attr_destroy(&attr);
+    return rc;
+}
+
 void app_open_admin_console(const settings_t *settings) {
 #ifdef _WIN32
     if (!settings) {
