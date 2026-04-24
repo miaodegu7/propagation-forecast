@@ -25,13 +25,35 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSizePolicy>
 #include <QtWidgets/QSplitter>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
 
 static constexpr int BACKEND_PORT = 18090;
 
+static QString zh(const char *text) {
+    return QString::fromUtf8(text);
+}
+
 static QString backendUrl(const QString &path) {
     return QStringLiteral("http://127.0.0.1:%1%2").arg(BACKEND_PORT).arg(path);
+}
+
+static void repolish(QWidget *widget) {
+    if (!widget) {
+        return;
+    }
+    widget->style()->unpolish(widget);
+    widget->style()->polish(widget);
+    widget->update();
+}
+
+static void setTone(QWidget *widget, const char *tone) {
+    if (!widget) {
+        return;
+    }
+    widget->setProperty("tone", tone);
+    repolish(widget);
 }
 
 static QFrame *makePanel(const QString &objectName) {
@@ -57,6 +79,14 @@ static QPushButton *makeButton(const QString &text, const char *tone) {
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     button->setProperty("tone", tone);
     return button;
+}
+
+static QLabel *makePill(const QString &text, const char *tone) {
+    auto *pill = makeLabel(text, QStringLiteral("statusPill"));
+    pill->setAlignment(Qt::AlignCenter);
+    pill->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setTone(pill, tone);
+    return pill;
 }
 
 static bool hasBackendTimestamp(const QString &line) {
@@ -131,7 +161,7 @@ public:
                 return;
             }
             forceKilled = true;
-            appendLog(QStringLiteral("后台停止超时，已强制结束进程。"));
+            appendLog(zh(u8"后台停止超时，已强制结束进程。"));
             backend.kill();
         });
 
@@ -143,7 +173,12 @@ public:
         anim->setEndValue(1.0);
         anim->start(QAbstractAnimation::DeleteWhenStopped);
 
-        appendLog(QStringLiteral("Qt 前端已就绪，等待启动后台。"));
+        appendLog(zh(u8"Qt 前端已就绪，等待启动后台。"));
+        setBackendStateUi(zh(u8"后台未运行"), "idle");
+        setStatusPill(servicePill, zh(u8"服务未启动"), "idle");
+        setStatusPill(refreshPill, zh(u8"等待后台"), "idle");
+        setStatusPill(cachePill, zh(u8"缓存未建立"), "warn");
+        setStatusPill(resultPill, zh(u8"尚未刷新"), "idle");
         refreshStatus();
     }
 
@@ -154,7 +189,6 @@ private:
     QNetworkAccessManager network;
     QTimer statusTimer;
     QTimer stopTimer;
-    QDateTime lastMqttChatterAt;
     int collapsedMqttChatter = 0;
     bool stopRequested = false;
     bool forceKilled = false;
@@ -165,6 +199,10 @@ private:
     QLabel *lastRefresh = nullptr;
     QLabel *snapshotAge = nullptr;
     QLabel *subtitle = nullptr;
+    QLabel *servicePill = nullptr;
+    QLabel *refreshPill = nullptr;
+    QLabel *cachePill = nullptr;
+    QLabel *resultPill = nullptr;
     PreviewLabel *mapPreview = nullptr;
     QPlainTextEdit *logView = nullptr;
 
@@ -177,7 +215,7 @@ private:
     QPushButton *send2mButton = nullptr;
 
     void setupUi() {
-        setWindowTitle(QStringLiteral("业余无线电传播助手"));
+        setWindowTitle(zh(u8"业余无线电传播助手"));
         resize(1040, 680);
         setMinimumSize(860, 560);
 
@@ -205,24 +243,26 @@ private:
         auto *brandLayout = new QVBoxLayout(brandPanel);
         brandLayout->setContentsMargins(18, 18, 18, 18);
         brandLayout->setSpacing(6);
-        brandLayout->addWidget(makeLabel(QStringLiteral("传播助手"), QStringLiteral("brand")));
-        brandLayout->addWidget(makeLabel(QStringLiteral("桌面控制台保留网页后台能力，同时把常用操作收拢到更顺手的原生界面里。"), QStringLiteral("brandSub")));
+        brandLayout->addWidget(makeLabel(zh(u8"传播助手"), QStringLiteral("brand")));
+        brandLayout->addWidget(makeLabel(zh(u8"本地后台控制与传播快览"), QStringLiteral("brandSub")));
 
         auto *servicePanel = makePanel(QStringLiteral("sidebarCard"));
         auto *serviceLayout = new QVBoxLayout(servicePanel);
         serviceLayout->setContentsMargins(16, 16, 16, 16);
         serviceLayout->setSpacing(12);
-        serviceLayout->addWidget(makeLabel(QStringLiteral("后台控制"), QStringLiteral("sidebarTitle")));
+        serviceLayout->addWidget(makeLabel(zh(u8"后台控制"), QStringLiteral("sidebarTitle")));
 
-        stateBadge = makeLabel(QStringLiteral("后台未运行"), QStringLiteral("stateBadge"));
+        stateBadge = makeLabel(zh(u8"后台未运行"), QStringLiteral("stateBadge"));
+        stateBadge->setAlignment(Qt::AlignCenter);
         backendPid = makeLabel(QStringLiteral("PID -"), QStringLiteral("pidBadge"));
+        backendPid->setAlignment(Qt::AlignCenter);
         serviceLayout->addWidget(stateBadge);
         serviceLayout->addWidget(backendPid);
 
-        startButton = makeButton(QStringLiteral("启动后台"), "accent");
-        stopButton = makeButton(QStringLiteral("停止后台"), "danger");
-        openWebButton = makeButton(QStringLiteral("打开网页后台"), "soft");
-        refreshButton = makeButton(QStringLiteral("立即刷新"), "soft");
+        startButton = makeButton(zh(u8"启动后台"), "accent");
+        stopButton = makeButton(zh(u8"停止后台"), "danger");
+        openWebButton = makeButton(zh(u8"打开网页后台"), "soft");
+        refreshButton = makeButton(zh(u8"立即刷新"), "soft");
 
         auto *serviceGrid = new QGridLayout;
         serviceGrid->setHorizontalSpacing(10);
@@ -237,12 +277,11 @@ private:
         auto *sendLayout = new QVBoxLayout(sendPanel);
         sendLayout->setContentsMargins(16, 16, 16, 16);
         sendLayout->setSpacing(12);
-        sendLayout->addWidget(makeLabel(QStringLiteral("快捷推送"), QStringLiteral("sidebarTitle")));
-        sendLayout->addWidget(makeLabel(QStringLiteral("把高频操作合并成大按钮，减少切回网页面板的次数。"), QStringLiteral("sidebarHint")));
+        sendLayout->addWidget(makeLabel(zh(u8"快捷推送"), QStringLiteral("sidebarTitle")));
 
-        sendFullButton = makeButton(QStringLiteral("发送完整简报"), "accentLight");
-        send6mButton = makeButton(QStringLiteral("发送 6m 简报"), "soft");
-        send2mButton = makeButton(QStringLiteral("发送 2m 简报"), "soft");
+        sendFullButton = makeButton(zh(u8"发送完整简报"), "accentLight");
+        send6mButton = makeButton(zh(u8"发送 6m 简报"), "soft");
+        send2mButton = makeButton(zh(u8"发送 2m 简报"), "soft");
 
         auto *sendGrid = new QGridLayout;
         sendGrid->setHorizontalSpacing(10);
@@ -279,36 +318,43 @@ private:
         auto *heroTop = new QHBoxLayout;
         auto *heroTitleBox = new QVBoxLayout;
         heroTitleBox->setSpacing(4);
-        heroTitleBox->addWidget(makeLabel(QStringLiteral("运行控制台"), QStringLiteral("title")));
-        subtitle = makeLabel(QStringLiteral("本机后台 127.0.0.1:%1").arg(BACKEND_PORT), QStringLiteral("subtitle"));
+        heroTitleBox->addWidget(makeLabel(zh(u8"运行控制台"), QStringLiteral("title")));
+        subtitle = makeLabel(QStringLiteral("127.0.0.1:%1").arg(BACKEND_PORT), QStringLiteral("subtitle"));
         heroTitleBox->addWidget(subtitle);
         heroTop->addLayout(heroTitleBox);
         heroTop->addStretch();
-        heroTop->addWidget(makeLabel(QStringLiteral("可自由拉伸窗口与分区"), QStringLiteral("heroNote")));
+        heroTop->addWidget(stateBadge);
         heroLayout->addLayout(heroTop);
+
+        auto *pillLayout = new QHBoxLayout;
+        pillLayout->setSpacing(10);
+        servicePill = makePill(zh(u8"服务未启动"), "idle");
+        refreshPill = makePill(zh(u8"等待后台"), "idle");
+        cachePill = makePill(zh(u8"缓存未建立"), "warn");
+        resultPill = makePill(zh(u8"尚未刷新"), "idle");
+        pillLayout->addWidget(servicePill);
+        pillLayout->addWidget(refreshPill);
+        pillLayout->addWidget(cachePill);
+        pillLayout->addWidget(resultPill);
+        heroLayout->addLayout(pillLayout);
 
         auto *metricsLayout = new QGridLayout;
         metricsLayout->setHorizontalSpacing(12);
         metricsLayout->setVerticalSpacing(12);
-        metricsLayout->addWidget(makeMetricCard(QStringLiteral("刷新状态"), &refreshState, QStringLiteral("等待连接")), 0, 0);
-        metricsLayout->addWidget(makeMetricCard(QStringLiteral("最后刷新"), &lastRefresh, QStringLiteral("-")), 0, 1);
-        metricsLayout->addWidget(makeMetricCard(QStringLiteral("快照缓存"), &snapshotAge, QStringLiteral("-")), 0, 2);
+        metricsLayout->addWidget(makeMetricCard(zh(u8"刷新状态"), &refreshState, zh(u8"等待连接")), 0, 0);
+        metricsLayout->addWidget(makeMetricCard(zh(u8"最后刷新"), &lastRefresh, QStringLiteral("-")), 0, 1);
+        metricsLayout->addWidget(makeMetricCard(zh(u8"快照缓存"), &snapshotAge, QStringLiteral("-")), 0, 2);
         heroLayout->addLayout(metricsLayout);
 
         auto *mapPanel = makePanel(QStringLiteral("mapPanel"));
         auto *mapLayout = new QVBoxLayout(mapPanel);
         mapLayout->setContentsMargins(16, 16, 16, 16);
         mapLayout->setSpacing(10);
-
-        auto *mapTop = new QHBoxLayout;
-        mapTop->addWidget(makeLabel(QStringLiteral("PSK 6m 快照"), QStringLiteral("panelTitle")));
-        mapTop->addStretch();
-        mapTop->addWidget(makeLabel(QStringLiteral("完整比例显示"), QStringLiteral("mapHint")));
-        mapLayout->addLayout(mapTop);
+        mapLayout->addWidget(makeLabel(zh(u8"PSK 6m 快照"), QStringLiteral("panelTitle")));
 
         mapPreview = new PreviewLabel;
         mapPreview->setObjectName(QStringLiteral("mapPreview"));
-        mapPreview->setPlaceholderText(QStringLiteral("等待图片"));
+        mapPreview->setPlaceholderText(zh(u8"等待图片"));
         mapLayout->addWidget(mapPreview, 1);
 
         topLayout->addWidget(heroPanel);
@@ -318,7 +364,7 @@ private:
         auto *logLayout = new QVBoxLayout(logPanel);
         logLayout->setContentsMargins(16, 16, 16, 16);
         logLayout->setSpacing(10);
-        logLayout->addWidget(makeLabel(QStringLiteral("运行日志"), QStringLiteral("panelTitle")));
+        logLayout->addWidget(makeLabel(zh(u8"运行日志"), QStringLiteral("panelTitle")));
         logView = new QPlainTextEdit;
         logView->setObjectName(QStringLiteral("logView"));
         logView->setReadOnly(true);
@@ -368,16 +414,16 @@ private:
             QDesktopServices::openUrl(QUrl(backendUrl(QStringLiteral("/"))));
         });
         QObject::connect(refreshButton, &QPushButton::clicked, [this]() {
-            post(QStringLiteral("/api/refresh?reason=qt"), QByteArray(), QStringLiteral("已请求刷新后台。"), true);
+            post(QStringLiteral("/api/refresh?reason=qt"), QByteArray(), zh(u8"已请求刷新后台。"), true);
         });
         QObject::connect(sendFullButton, &QPushButton::clicked, [this]() {
-            post(QStringLiteral("/actions/send"), QByteArray("kind=full"), QStringLiteral("已请求发送完整简报。"), true);
+            post(QStringLiteral("/actions/send"), QByteArray("kind=full"), zh(u8"已请求发送完整简报。"), true);
         });
         QObject::connect(send6mButton, &QPushButton::clicked, [this]() {
-            post(QStringLiteral("/actions/send"), QByteArray("kind=6m"), QStringLiteral("已请求发送 6m 简报。"), true);
+            post(QStringLiteral("/actions/send"), QByteArray("kind=6m"), zh(u8"已请求发送 6m 简报。"), true);
         });
         QObject::connect(send2mButton, &QPushButton::clicked, [this]() {
-            post(QStringLiteral("/actions/send"), QByteArray("kind=2m"), QStringLiteral("已请求发送 2m 简报。"), true);
+            post(QStringLiteral("/actions/send"), QByteArray("kind=2m"), zh(u8"已请求发送 2m 简报。"), true);
         });
 
         QObject::connect(&backend, &QProcess::readyReadStandardOutput, [this]() {
@@ -397,19 +443,24 @@ private:
                 stopRequested = false;
                 forceKilled = false;
 
-                stateBadge->setText(QStringLiteral("后台未运行"));
                 backendPid->setText(QStringLiteral("PID -"));
-                refreshState->setText(QStringLiteral("等待连接"));
+                refreshState->setText(zh(u8"等待连接"));
                 updateButtons(false);
+                setBackendStateUi(zh(u8"后台未运行"), "idle");
+                setStatusPill(servicePill, zh(u8"服务未启动"), "idle");
+                setStatusPill(refreshPill, zh(u8"等待后台"), "idle");
 
                 if (killedByTimeout) {
-                    appendLog(QStringLiteral("后台已被强制结束。"));
+                    appendLog(zh(u8"后台已被强制结束。"));
+                    setStatusPill(resultPill, zh(u8"停止超时"), "error");
                 } else if (stoppedByUser) {
-                    appendLog(QStringLiteral("后台已停止。"));
+                    appendLog(zh(u8"后台已停止。"));
+                    setStatusPill(resultPill, zh(u8"已手动停止"), "idle");
                 } else {
-                    appendLog(QStringLiteral("后台已退出，退出码 %1，状态 %2")
+                    appendLog(zh(u8"后台已退出，退出码 %1，状态 %2")
                         .arg(code)
-                        .arg(status == QProcess::NormalExit ? QStringLiteral("正常") : QStringLiteral("异常")));
+                        .arg(status == QProcess::NormalExit ? zh(u8"正常") : zh(u8"异常")));
+                    setStatusPill(resultPill, zh(u8"后台已退出"), status == QProcess::NormalExit ? "warn" : "error");
                 }
             });
     }
@@ -420,8 +471,8 @@ private:
 
         setStyleSheet(QStringLiteral(R"(
             QWidget#window {
-                background: qradialgradient(cx:0.15, cy:0.1, radius:1.0, fx:0.15, fy:0.1,
-                    stop:0 #edf4ee, stop:0.55 #dde7e1, stop:1 #ced9d3);
+                background: qradialgradient(cx:0.15, cy:0.08, radius:1.1, fx:0.15, fy:0.08,
+                    stop:0 #eef5ef, stop:0.55 #dde7e1, stop:1 #cbd7d0);
             }
             QFrame#shell {
                 background: rgba(255, 255, 255, 0.55);
@@ -433,7 +484,7 @@ private:
             }
             QFrame#sidebar {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #163730, stop:1 #224840);
+                    stop:0 #18362f, stop:1 #244740);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 18px;
             }
@@ -443,40 +494,64 @@ private:
                 border-radius: 14px;
             }
             QLabel#brand {
-                color: #f5fff9;
-                font-size: 28px;
-                font-weight: 800;
+                color: #102c25;
+                font-size: 30px;
+                font-weight: 900;
+                letter-spacing: 1px;
             }
             QLabel#brandSub {
-                color: #c9ddd5;
+                color: #4f665f;
                 font-size: 13px;
-                line-height: 1.5;
             }
             QLabel#sidebarTitle {
                 color: #183a33;
                 font-size: 15px;
                 font-weight: 800;
             }
-            QLabel#sidebarHint, QLabel#subtitle, QLabel#heroNote, QLabel#mapHint, QLabel#metricCaption {
+            QLabel#subtitle, QLabel#metricCaption {
                 color: #6a7b75;
                 font-size: 12px;
             }
             QLabel#title {
                 color: #17352f;
                 font-size: 30px;
-                font-weight: 800;
+                font-weight: 900;
             }
             QLabel#panelTitle {
                 color: #17352f;
                 font-size: 16px;
                 font-weight: 800;
             }
-            QLabel#stateBadge {
-                background: #d9f36a;
-                color: #17352f;
-                border-radius: 16px;
+            QLabel#stateBadge, QLabel#statusPill {
+                border-radius: 15px;
                 padding: 10px 14px;
                 font-weight: 800;
+                border: 1px solid transparent;
+            }
+            QLabel#stateBadge[tone="idle"], QLabel#statusPill[tone="idle"] {
+                background: #ecf1ee;
+                color: #4c625b;
+                border-color: #d7dfda;
+            }
+            QLabel#stateBadge[tone="running"], QLabel#statusPill[tone="running"] {
+                background: #e3f2d4;
+                color: #26452f;
+                border-color: #cfe3bb;
+            }
+            QLabel#stateBadge[tone="accent"], QLabel#statusPill[tone="accent"] {
+                background: #d9f36a;
+                color: #17352f;
+                border-color: #c8e557;
+            }
+            QLabel#stateBadge[tone="warn"], QLabel#statusPill[tone="warn"] {
+                background: #f7ecd6;
+                color: #735126;
+                border-color: #ecd9b5;
+            }
+            QLabel#stateBadge[tone="error"], QLabel#statusPill[tone="error"] {
+                background: #f6e2de;
+                color: #813f31;
+                border-color: #ebc4bc;
             }
             QLabel#pidBadge {
                 background: #edf3ef;
@@ -508,7 +583,7 @@ private:
             }
             QPushButton {
                 border: 0;
-                border-radius: 14px;
+                border-radius: 16px;
                 padding: 12px 16px;
                 font-weight: 800;
                 text-align: center;
@@ -546,6 +621,19 @@ private:
         )"));
     }
 
+    void setBackendStateUi(const QString &text, const char *tone) {
+        stateBadge->setText(text);
+        setTone(stateBadge, tone);
+    }
+
+    void setStatusPill(QLabel *pill, const QString &text, const char *tone) {
+        if (!pill) {
+            return;
+        }
+        pill->setText(text);
+        setTone(pill, tone);
+    }
+
     void appendLog(const QString &message) {
         const auto lines = message.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
         for (const QString &rawLine : lines) {
@@ -564,24 +652,22 @@ private:
     }
 
     bool shouldCollapseMqttChatter(const QString &line) {
-        const bool isMqttChatter = line.contains(QStringLiteral("PSKReporter MQTT 已断开 rc=7"))
-            || line.contains(QStringLiteral("已连接 PSKReporter MQTT"));
+        const bool isMqttChatter = line.contains(zh(u8"PSKReporter MQTT 已断开 rc=7"))
+            || line.contains(zh(u8"已连接 PSKReporter MQTT"));
         if (!isMqttChatter) {
             return false;
         }
         collapsedMqttChatter++;
-        lastMqttChatterAt = QDateTime::currentDateTime();
         return true;
     }
 
     void flushCollapsedMqttChatter() {
-        if (collapsedMqttChatter >= 4) {
-            logView->appendPlainText(QStringLiteral("[%1] MQTT 连接波动已折叠 %2 条重复日志")
+        if (collapsedMqttChatter >= 6) {
+            logView->appendPlainText(QStringLiteral("[%1] %2")
                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")))
-                .arg(collapsedMqttChatter));
+                .arg(zh(u8"MQTT 连接波动已折叠 %1 条重复日志").arg(collapsedMqttChatter)));
         }
         collapsedMqttChatter = 0;
-        lastMqttChatterAt = QDateTime();
     }
 
     void updateButtons(bool running) {
@@ -601,11 +687,11 @@ private:
 
     void startBackend() {
         if (backendRunning()) {
-            appendLog(QStringLiteral("后台已经在运行。"));
+            appendLog(zh(u8"后台已经在运行。"));
             return;
         }
         if (!QFileInfo::exists(backendPath)) {
-            appendLog(QStringLiteral("未找到 propagation_bot.exe：%1").arg(backendPath));
+            appendLog(zh(u8"未找到 propagation_bot.exe：%1").arg(backendPath));
             return;
         }
 
@@ -625,16 +711,20 @@ private:
         backend.setProcessChannelMode(QProcess::SeparateChannels);
         backend.start();
         if (!backend.waitForStarted(3000)) {
-            appendLog(QStringLiteral("后台启动失败：%1").arg(backend.errorString()));
+            appendLog(zh(u8"后台启动失败：%1").arg(backend.errorString()));
+            setBackendStateUi(zh(u8"启动失败"), "error");
+            setStatusPill(servicePill, zh(u8"服务启动失败"), "error");
             return;
         }
 
-        stateBadge->setText(QStringLiteral("后台启动中"));
         backendPid->setText(QStringLiteral("PID %1").arg(backend.processId()));
-        refreshState->setText(QStringLiteral("连接中"));
+        refreshState->setText(zh(u8"连接中"));
         updateButtons(true);
         statusTimer.start();
-        appendLog(QStringLiteral("后台已启动，PID %1").arg(backend.processId()));
+        setBackendStateUi(zh(u8"后台启动中"), "accent");
+        setStatusPill(servicePill, zh(u8"服务启动中"), "accent");
+        setStatusPill(refreshPill, zh(u8"等待状态"), "idle");
+        appendLog(zh(u8"后台已启动，PID %1").arg(backend.processId()));
         QTimer::singleShot(900, [this]() {
             if (!stopRequested && backendRunning()) {
                 refreshStatus();
@@ -644,7 +734,7 @@ private:
 
     void stopBackend() {
         if (!backendRunning()) {
-            stateBadge->setText(QStringLiteral("后台未运行"));
+            setBackendStateUi(zh(u8"后台未运行"), "idle");
             updateButtons(false);
             return;
         }
@@ -653,23 +743,26 @@ private:
         forceKilled = false;
         statusTimer.stop();
         updateButtons(true);
-        stateBadge->setText(QStringLiteral("后台停止中"));
-        refreshState->setText(QStringLiteral("正在结束"));
-        appendLog(QStringLiteral("已请求停止后台。"));
+        setBackendStateUi(zh(u8"后台停止中"), "warn");
+        setStatusPill(servicePill, zh(u8"服务停止中"), "warn");
+        setStatusPill(refreshPill, zh(u8"正在结束"), "warn");
+        refreshState->setText(zh(u8"正在结束"));
+        appendLog(zh(u8"已请求停止后台。"));
 
         QNetworkRequest request(QUrl(backendUrl(QStringLiteral("/actions/shutdown"))));
         auto reply = network.post(request, QByteArray());
         QObject::connect(reply, &QNetworkReply::finished, [this, reply]() {
             const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             const auto error = reply->error();
+            const QString errorText = reply->errorString();
             reply->deleteLater();
             if (!stopRequested) {
                 return;
             }
             if (error == QNetworkReply::NoError || (status >= 200 && status < 400)) {
-                appendLog(QStringLiteral("后台已收到停止指令。"));
+                appendLog(zh(u8"后台已收到停止指令。"));
             } else if (backendRunning()) {
-                appendLog(QStringLiteral("停止指令未确认：%1").arg(reply->errorString()));
+                appendLog(zh(u8"停止指令未确认：%1").arg(errorText));
             }
         });
 
@@ -689,22 +782,38 @@ private:
                 if (stopRequested || !backendRunning()) {
                     return;
                 }
-                stateBadge->setText(QStringLiteral("等待后台"));
-                refreshState->setText(QStringLiteral("连接中"));
+                setBackendStateUi(zh(u8"等待后台"), "idle");
+                setStatusPill(servicePill, zh(u8"连接中"), "idle");
+                setStatusPill(refreshPill, zh(u8"状态未返回"), "warn");
                 return;
             }
 
             const auto doc = QJsonDocument::fromJson(reply->readAll());
             const auto obj = doc.object();
             const bool refreshing = obj.value(QStringLiteral("refreshing")).toBool();
-            const QString status = obj.value(QStringLiteral("status")).toString(QStringLiteral("空闲"));
-            stateBadge->setText(refreshing ? QStringLiteral("正在刷新") : QStringLiteral("后台运行中"));
-            refreshState->setText(status);
-            lastRefresh->setText(obj.value(QStringLiteral("last_refreshed_text")).toString(QStringLiteral("-")));
+            const int lastRc = obj.value(QStringLiteral("last_rc")).toInt(0);
+            const QString status = obj.value(QStringLiteral("status")).toString(zh(u8"空闲"));
+            const QString reason = obj.value(QStringLiteral("reason")).toString();
+            const QString refreshedText = obj.value(QStringLiteral("last_refreshed_text")).toString(QStringLiteral("-"));
             const int ageSeconds = obj.value(QStringLiteral("snapshot_age_seconds")).toInt(-1);
-            snapshotAge->setText(ageSeconds < 0
-                ? QStringLiteral("暂无")
-                : QStringLiteral("%1 秒").arg(ageSeconds));
+
+            setBackendStateUi(refreshing ? zh(u8"正在刷新") : zh(u8"后台运行中"), refreshing ? "accent" : "running");
+            setStatusPill(servicePill, zh(u8"服务在线"), "running");
+            setStatusPill(refreshPill,
+                refreshing
+                    ? zh(u8"刷新中 · %1").arg(reason.isEmpty() ? QStringLiteral("manual") : reason)
+                    : zh(u8"状态 · %1").arg(status),
+                refreshing ? "accent" : (lastRc < 0 ? "warn" : "running"));
+            setStatusPill(cachePill,
+                ageSeconds < 0 ? zh(u8"缓存未建立") : zh(u8"缓存 %1 秒").arg(ageSeconds),
+                ageSeconds < 0 ? "warn" : (ageSeconds > 600 ? "warn" : "running"));
+            setStatusPill(resultPill,
+                lastRc < 0 ? zh(u8"最近刷新失败") : zh(u8"最后刷新 · %1").arg(refreshedText),
+                lastRc < 0 ? "error" : "idle");
+
+            refreshState->setText(status);
+            lastRefresh->setText(refreshedText);
+            snapshotAge->setText(ageSeconds < 0 ? zh(u8"暂无") : zh(u8"%1 秒").arg(ageSeconds));
             backendPid->setText(QStringLiteral("PID %1").arg(backend.processId()));
             updateButtons(true);
             loadMapPreview();
@@ -721,7 +830,7 @@ private:
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
                 if (!stopRequested && backendRunning()) {
-                    mapPreview->setPlaceholderText(QStringLiteral("图片暂不可用"));
+                    mapPreview->setPlaceholderText(zh(u8"图片暂不可用"));
                 }
                 return;
             }
@@ -734,7 +843,7 @@ private:
 
     void post(const QString &path, const QByteArray &body, const QString &successMessage, bool refreshAfterSuccess) {
         if (!backendRunning() || stopRequested) {
-            appendLog(QStringLiteral("后台未运行，无法发送请求。"));
+            appendLog(zh(u8"后台未运行，无法发送请求。"));
             return;
         }
 
@@ -762,7 +871,7 @@ private:
             if (stopRequested || !backendRunning()) {
                 return;
             }
-            appendLog(QStringLiteral("请求失败，HTTP %1：%2").arg(status).arg(errorText));
+            appendLog(zh(u8"请求失败，HTTP %1：%2").arg(status).arg(errorText));
         });
     }
 };
