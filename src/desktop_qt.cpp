@@ -10,6 +10,7 @@
 #include <QtGui/QDesktopServices>
 #include <QtGui/QFont>
 #include <QtGui/QPixmap>
+#include <QtGui/QResizeEvent>
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
@@ -22,9 +23,7 @@
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
-#include <QtWidgets/QScrollArea>
 #include <QtWidgets/QSizePolicy>
-#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QVBoxLayout>
 #include <QtWidgets/QWidget>
 
@@ -48,6 +47,17 @@ static QLabel *makeLabel(const QString &text, const QString &objectName = QStrin
     }
     label->setWordWrap(true);
     return label;
+}
+
+static bool hasBackendTimestamp(const QString &line) {
+    return line.size() >= 21
+        && line.at(0) == QLatin1Char('[')
+        && line.at(5) == QLatin1Char('-')
+        && line.at(8) == QLatin1Char('-')
+        && line.at(11) == QLatin1Char(' ')
+        && line.at(14) == QLatin1Char(':')
+        && line.at(17) == QLatin1Char(':')
+        && line.at(20) == QLatin1Char(']');
 }
 
 class FrontendWindow : public QMainWindow {
@@ -82,6 +92,9 @@ private:
     QProcess backend;
     QNetworkAccessManager network;
     QTimer statusTimer;
+    QPixmap mapPixmap;
+    QDateTime lastMqttChatterAt;
+    int collapsedMqttChatter = 0;
 
     QLabel *stateBadge = nullptr;
     QLabel *subtitle = nullptr;
@@ -197,7 +210,7 @@ private:
         mapPreview = new QLabel(QStringLiteral("等待图片"));
         mapPreview->setObjectName(QStringLiteral("mapPreview"));
         mapPreview->setAlignment(Qt::AlignCenter);
-        mapPreview->setMinimumHeight(270);
+        mapPreview->setMinimumHeight(320);
         mapPreview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         mapLayout->addWidget(mapPreview);
 
@@ -284,12 +297,53 @@ private:
     }
 
     void appendLog(const QString &message) {
-        if (message.trimmed().isEmpty()) {
+        const auto lines = message.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &rawLine : lines) {
+            appendLogLine(rawLine.trimmed());
+        }
+    }
+
+    void appendLogLine(const QString &line) {
+        if (line.isEmpty() || shouldCollapseMqttChatter(line)) {
             return;
         }
-        const QString line = QStringLiteral("[%1] %2")
-            .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), message);
-        logView->appendPlainText(line);
+        flushCollapsedMqttChatter();
+        logView->appendPlainText(hasBackendTimestamp(line)
+            ? line
+            : QStringLiteral("[%1] %2").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")), line));
+    }
+
+    bool shouldCollapseMqttChatter(const QString &line) {
+        const bool isMqttChatter = line.contains(QStringLiteral("PSKReporter MQTT 已断开 rc=7"))
+            || line.contains(QStringLiteral("已连接 PSKReporter MQTT"));
+        if (!isMqttChatter) {
+            return false;
+        }
+
+        const QDateTime now = QDateTime::currentDateTime();
+        if (lastMqttChatterAt.isValid() && lastMqttChatterAt.secsTo(now) < 20) {
+            collapsedMqttChatter++;
+            lastMqttChatterAt = now;
+            if (collapsedMqttChatter % 6 == 0) {
+                logView->appendPlainText(QStringLiteral("[%1] MQTT 连接波动仍在发生，已折叠 %2 条重复日志")
+                    .arg(now.toString(QStringLiteral("HH:mm:ss")))
+                    .arg(collapsedMqttChatter));
+            }
+            return true;
+        }
+
+        lastMqttChatterAt = now;
+        return false;
+    }
+
+    void flushCollapsedMqttChatter() {
+        if (collapsedMqttChatter <= 0) {
+            return;
+        }
+        logView->appendPlainText(QStringLiteral("[%1] MQTT 连接波动已折叠 %2 条重复日志")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")))
+            .arg(collapsedMqttChatter));
+        collapsedMqttChatter = 0;
     }
 
     void updateButtons(bool running) {
@@ -386,9 +440,25 @@ private:
             }
             QPixmap pixmap;
             if (pixmap.loadFromData(reply->readAll())) {
-                mapPreview->setPixmap(pixmap.scaled(mapPreview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                mapPixmap = pixmap;
+                updateMapPreviewPixmap();
             }
         });
+    }
+
+    void updateMapPreviewPixmap() {
+        if (mapPixmap.isNull() || !mapPreview) {
+            return;
+        }
+        const QSize target = mapPreview->contentsRect().size();
+        if (target.isEmpty()) {
+            return;
+        }
+
+        QPixmap scaled = mapPixmap.scaled(target, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        const int x = qMax(0, (scaled.width() - target.width()) / 2);
+        const int y = qMax(0, (scaled.height() - target.height()) / 2);
+        mapPreview->setPixmap(scaled.copy(x, y, target.width(), target.height()));
     }
 
     void post(const QString &path, const QByteArray &body, const QString &successMessage) {
@@ -406,6 +476,12 @@ private:
                 appendLog(QStringLiteral("请求失败，HTTP %1：%2").arg(status).arg(reply->errorString()));
             }
         });
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QMainWindow::resizeEvent(event);
+        updateMapPreviewPixmap();
     }
 };
 
