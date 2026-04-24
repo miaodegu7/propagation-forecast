@@ -54,11 +54,13 @@ jobs:
             make STATIC=1 EXEEXT=.exe
           } > "$static_log" 2>&1; then
             cp propagation_bot.exe dist/
+            cp propagation_desktop.exe dist/
             build_ok=true
             single_file=true
             artifact_name="propagation-bot-windows-single-exe"
           else
             rm -f propagation_bot.exe
+            rm -f propagation_desktop.exe
             {
               echo "[dynamic] make clean"
               make clean
@@ -66,9 +68,10 @@ jobs:
               make EXEEXT=.exe
               echo "[dynamic] package dependencies"
               python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
+              cp propagation_desktop.exe dist/
             } > "$dynamic_log" 2>&1 || true
 
-            if [ -f dist/propagation_bot.exe ]; then
+            if [ -f dist/propagation_bot.exe ] && [ -f dist/propagation_desktop.exe ]; then
               build_ok=true
               single_file=false
               artifact_name="propagation-bot-windows-portable"

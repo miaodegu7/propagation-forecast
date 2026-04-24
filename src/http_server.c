@@ -1437,6 +1437,16 @@ static void handle_request(app_t *app, app_socket_t fd, const http_request_t *re
         send_redirect(fd, "/");
         return;
     }
+    if (strcmp(req->path, "/actions/shutdown") == 0 && strcmp(req->method, "POST") == 0) {
+        send_response(fd, "200 OK", "text/plain", "shutdown queued");
+        app->running = 0;
+        if (app->http_fd != APP_INVALID_SOCKET) {
+            shutdown(app->http_fd, SHUT_RDWR);
+            close(app->http_fd);
+            app->http_fd = APP_INVALID_SOCKET;
+        }
+        return;
+    }
     if (strcmp(req->path, "/api/onebot") == 0 && strcmp(req->method, "POST") == 0) {
         handle_onebot_webhook(app, fd, req);
         return;

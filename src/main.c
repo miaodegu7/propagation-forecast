@@ -3,12 +3,26 @@
 
 static app_t *g_app = NULL;
 
+static void apply_runtime_network_overrides(app_t *app, const char *bind_override, int port_override) {
+    if (!app) {
+        return;
+    }
+    if (bind_override && *bind_override) {
+        copy_string(app->settings.bind_addr, sizeof(app->settings.bind_addr), bind_override);
+    }
+    if (port_override > 0 && port_override <= 65535) {
+        app->settings.http_port = port_override;
+    }
+}
+
 static void handle_signal(int signo) {
     if (g_app) {
-        app_write_boot_log("鏀跺埌绯荤粺淇″彿: %d", signo);
+        app_write_boot_log("收到系统信号: %d", signo);
         g_app->running = 0;
         if (g_app->http_fd != APP_INVALID_SOCKET) {
             shutdown(g_app->http_fd, SHUT_RDWR);
+            close(g_app->http_fd);
+            g_app->http_fd = APP_INVALID_SOCKET;
         }
     }
     (void)signo;
@@ -50,7 +64,7 @@ static void maybe_fire_schedule_rule(app_t *app, const schedule_rule_t *rule) {
 
     if (report_copy && send_report_to_all_targets(app, report_copy) >= 0) {
         storage_set_schedule_last_fire(app, rule->id, today);
-        app_log(app, "INFO", "宸叉墽琛屽畾鏃舵帹閫? %s %s", rule->label, rule->hhmm);
+        app_log(app, "INFO", "已执行定时推送: %s %s", rule->label, rule->hhmm);
     }
     free(report_copy);
 }
@@ -79,6 +93,8 @@ int main(int argc, char **argv) {
     char default_db_path[1024];
     app_default_db_path(default_db_path, sizeof(default_db_path));
     const char *db_path = default_db_path;
+    const char *bind_override = NULL;
+    int port_override = 0;
     int hide_console = 1;
 
     for (int i = 1; i < argc; ++i) {
@@ -97,19 +113,27 @@ int main(int argc, char **argv) {
             db_path = argv[++i];
             continue;
         }
+        if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
+            bind_override = argv[++i];
+            continue;
+        }
+        if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            port_override = atoi(argv[++i]);
+            continue;
+        }
         if (argv[i][0] != '-') {
             db_path = argv[i];
         }
     }
 
     app_prepare_desktop_mode(hide_console);
-    app_write_boot_log("绋嬪簭鍚姩锛屾暟鎹簱璺緞: %s", db_path);
+    app_write_boot_log("程序启动，数据库路径: %s", db_path);
 
     app_t *app = calloc(1, sizeof(*app));
     if (!app) {
-        app_write_boot_log("鍐呭瓨鍒嗛厤澶辫触");
+        app_write_boot_log("内存分配失败");
         if (hide_console) {
-            app_show_startup_error("浼犳挱鍚庡彴鍚姩澶辫触", "鍐呭瓨鍒嗛厤澶辫触锛岃鏌ョ湅 propagation_bot.log");
+            app_show_startup_error("传播后台启动失败", "内存分配失败，请查看 propagation_bot.log");
         }
         return 1;
     }
@@ -133,9 +157,9 @@ int main(int argc, char **argv) {
 
     if (app_net_init() != 0) {
         fprintf(stderr, "failed to initialize network runtime\n");
-        app_write_boot_log("缃戠粶杩愯鏃跺垵濮嬪寲澶辫触");
+        app_write_boot_log("网络运行时初始化失败");
         if (hide_console) {
-            app_show_startup_error("浼犳挱鍚庡彴鍚姩澶辫触", "缃戠粶杩愯鏃跺垵濮嬪寲澶辫触锛岃鏌ョ湅 propagation_bot.log");
+            app_show_startup_error("传播后台启动失败", "网络运行时初始化失败，请查看 propagation_bot.log");
         }
         free(app);
         return 1;
@@ -145,9 +169,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "failed to initialize database: %s\n", db_path);
         if (hide_console) {
             char message[1024];
-            snprintf(message, sizeof(message), "%s\n\n璇锋煡鐪嬪悓鐩綍涓嬬殑 propagation_bot.log",
-                app->last_error[0] ? app->last_error : "鏁版嵁搴撳垵濮嬪寲澶辫触");
-            app_show_startup_error("浼犳挱鍚庡彴鍚姩澶辫触", message);
+            snprintf(message, sizeof(message), "%s\n\n请查看同目录下的 propagation_bot.log",
+                app->last_error[0] ? app->last_error : "数据库初始化失败");
+            app_show_startup_error("传播后台启动失败", message);
         }
         app_net_cleanup();
         free(app);
@@ -155,6 +179,7 @@ int main(int argc, char **argv) {
     }
 
     storage_load_settings(app, &app->settings);
+    apply_runtime_network_overrides(app, bind_override, port_override);
     apply_timezone(app->settings.timezone);
     g_app = app;
     signal(SIGINT, handle_signal);
@@ -172,21 +197,22 @@ int main(int argc, char **argv) {
     storage_get_state(app, "last_2m_alert_at", temp, sizeof(temp));
     app->last_twom_alert_at = (time_t)atoll(temp);
 
-    app_log(app, "INFO", "鏈嶅姟鍚姩锛屾暟鎹簱: %s", db_path);
+    app_log(app, "INFO", "服务启动，数据库: %s", db_path);
     psk_start(app);
     app_rebuild_snapshot(app);
     app_request_refresh_async(app, 1, 1, "startup");
+    apply_runtime_network_overrides(app, bind_override, port_override);
 
     pthread_t scheduler;
     pthread_create(&scheduler, NULL, scheduler_thread, app);
 
     int server_rc = http_server_run(app);
-    app_log(app, server_rc == 0 ? "WARN" : "ERROR", "HTTP 鏈嶅姟涓诲惊鐜粨鏉燂紝server_rc=%d", server_rc);
+    app_log(app, server_rc == 0 ? "WARN" : "ERROR", "HTTP 服务主循环结束，server_rc=%d", server_rc);
     if (server_rc != 0 && hide_console && !app->admin_console_opened) {
         char message[1024];
-        snprintf(message, sizeof(message), "%s\n\n璇锋煡鐪嬪悓鐩綍涓嬬殑 propagation_bot.log",
-            app->last_error[0] ? app->last_error : "HTTP 鍚庡彴鍚姩澶辫触");
-        app_show_startup_error("浼犳挱鍚庡彴鍚姩澶辫触", message);
+        snprintf(message, sizeof(message), "%s\n\n请查看同目录下的 propagation_bot.log",
+            app->last_error[0] ? app->last_error : "HTTP 后台启动失败");
+        app_show_startup_error("传播后台启动失败", message);
     }
 
     app->running = 0;

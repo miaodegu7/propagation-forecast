@@ -18,6 +18,7 @@ SYSTEM_DLLS = {
     "dhcpcsvc.dll",
     "dnsapi.dll",
     "gdi32.dll",
+    "gdiplus.dll",
     "iphlpapi.dll",
     "kernel32.dll",
     "msvcrt.dll",
@@ -35,9 +36,15 @@ SYSTEM_DLLS = {
     "user32.dll",
     "userenv.dll",
     "winmm.dll",
+    "wldap32.dll",
     "wsock32.dll",
     "ws2_32.dll",
 }
+
+
+def is_system_dll(name: str) -> bool:
+    key = name.lower()
+    return key in SYSTEM_DLLS or key.startswith("api-ms-win-") or key.startswith("ext-ms-win-")
 
 
 def list_dlls(binary: Path) -> list[str]:
@@ -75,7 +82,7 @@ def copy_tree_dependencies(root_binary: Path, out_dir: Path, search_dir: Path) -
 
         for dll_name in list_dlls(binary):
             key = dll_name.lower()
-            if key in SYSTEM_DLLS or key in copied:
+            if is_system_dll(key) or key in copied:
                 continue
             source = available.get(key)
             if source is None:

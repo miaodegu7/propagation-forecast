@@ -99,7 +99,7 @@ static int seed_defaults(sqlite3 *db) {
         const char *key;
         const char *value;
     } defaults[] = {
-        {"bind_addr", "0.0.0.0"},
+        {"bind_addr", "127.0.0.1"},
         {"http_port", "8080"},
         {"admin_user", ""},
         {"admin_password", ""},
