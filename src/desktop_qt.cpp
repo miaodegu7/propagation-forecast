@@ -104,8 +104,9 @@ class PreviewLabel : public QLabel {
 public:
     PreviewLabel() {
         setAlignment(Qt::AlignCenter);
-        setMinimumHeight(320);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        setMinimumHeight(240);
+        setMaximumHeight(340);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     }
 
     void setPreviewPixmap(const QPixmap &pixmap) {
@@ -348,8 +349,8 @@ private:
 
         auto *mapPanel = makePanel(QStringLiteral("mapPanel"));
         auto *mapLayout = new QVBoxLayout(mapPanel);
-        mapLayout->setContentsMargins(16, 16, 16, 16);
-        mapLayout->setSpacing(10);
+        mapLayout->setContentsMargins(14, 14, 14, 14);
+        mapLayout->setSpacing(8);
         mapLayout->addWidget(makeLabel(zh(u8"PSK 6m 快照"), QStringLiteral("panelTitle")));
 
         mapPreview = new PreviewLabel;
@@ -471,12 +472,12 @@ private:
 
         setStyleSheet(QStringLiteral(R"(
             QWidget#window {
-                background: qradialgradient(cx:0.15, cy:0.08, radius:1.1, fx:0.15, fy:0.08,
-                    stop:0 #eef5ef, stop:0.55 #dde7e1, stop:1 #cbd7d0);
+                background: qradialgradient(cx:0.15, cy:0.08, radius:1.12, fx:0.15, fy:0.08,
+                    stop:0 #ffffff, stop:0.52 #f9fbff, stop:1 #f8f4f8);
             }
             QFrame#shell {
-                background: rgba(255, 255, 255, 0.55);
-                border: 1px solid rgba(23, 53, 47, 0.10);
+                background: rgba(255, 255, 255, 0.82);
+                border: 1px solid rgba(91, 206, 250, 0.18);
                 border-radius: 22px;
             }
             QSplitter::handle {
@@ -484,41 +485,41 @@ private:
             }
             QFrame#sidebar {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #18362f, stop:1 #244740);
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                    stop:0 #eef8ff, stop:0.58 #fdfcff, stop:1 #fff2f7);
+                border: 1px solid rgba(196, 214, 235, 0.75);
                 border-radius: 18px;
             }
             QFrame#brandPanel, QFrame#sidebarCard, QFrame#heroPanel, QFrame#mapPanel, QFrame#logPanel, QFrame#metricCard {
                 background: rgba(255, 255, 255, 0.96);
-                border: 1px solid #d9e2dd;
+                border: 1px solid #e3ebf3;
                 border-radius: 14px;
             }
             QLabel#brand {
-                color: #102c25;
+                color: #2b5f86;
                 font-size: 30px;
                 font-weight: 900;
                 letter-spacing: 1px;
             }
             QLabel#brandSub {
-                color: #4f665f;
+                color: #8a6d85;
                 font-size: 13px;
             }
             QLabel#sidebarTitle {
-                color: #183a33;
+                color: #2f5f88;
                 font-size: 15px;
                 font-weight: 800;
             }
             QLabel#subtitle, QLabel#metricCaption {
-                color: #6a7b75;
+                color: #8f90a7;
                 font-size: 12px;
             }
             QLabel#title {
-                color: #17352f;
+                color: #2f5f88;
                 font-size: 30px;
                 font-weight: 900;
             }
             QLabel#panelTitle {
-                color: #17352f;
+                color: #2f5f88;
                 font-size: 16px;
                 font-weight: 800;
             }
@@ -529,57 +530,57 @@ private:
                 border: 1px solid transparent;
             }
             QLabel#stateBadge[tone="idle"], QLabel#statusPill[tone="idle"] {
-                background: #ecf1ee;
-                color: #4c625b;
-                border-color: #d7dfda;
+                background: #ffffff;
+                color: #7590a3;
+                border-color: #d7e9f6;
             }
             QLabel#stateBadge[tone="running"], QLabel#statusPill[tone="running"] {
-                background: #e3f2d4;
-                color: #26452f;
-                border-color: #cfe3bb;
+                background: #def5ff;
+                color: #2f6f91;
+                border-color: #bfe9f9;
             }
             QLabel#stateBadge[tone="accent"], QLabel#statusPill[tone="accent"] {
-                background: #d9f36a;
-                color: #17352f;
-                border-color: #c8e557;
+                background: #ffdce8;
+                color: #9a5872;
+                border-color: #f6c8d8;
             }
             QLabel#stateBadge[tone="warn"], QLabel#statusPill[tone="warn"] {
-                background: #f7ecd6;
-                color: #735126;
-                border-color: #ecd9b5;
+                background: #fff8fb;
+                color: #a17b8e;
+                border-color: #f3d8e5;
             }
             QLabel#stateBadge[tone="error"], QLabel#statusPill[tone="error"] {
-                background: #f6e2de;
-                color: #813f31;
-                border-color: #ebc4bc;
+                background: #ffd3e2;
+                color: #a34d6e;
+                border-color: #f0b7cb;
             }
             QLabel#pidBadge {
-                background: #edf3ef;
-                color: #35554c;
+                background: #f6fbff;
+                color: #6a8aa0;
                 border-radius: 14px;
                 padding: 9px 12px;
-                border: 1px solid #d3ddd7;
+                border: 1px solid #d7e9f6;
             }
             QLabel#metricValue {
-                color: #17352f;
+                color: #2f5f88;
                 font-size: 22px;
                 font-weight: 800;
             }
             QLabel#mapPreview {
-                background: #f8fbf8;
-                border: 1px solid #d7e0da;
+                background: #ffffff;
+                border: 1px solid #dbeaf7;
                 border-radius: 10px;
-                color: #677772;
-                padding: 6px;
+                color: #8c8fa8;
+                padding: 4px;
             }
             QPlainTextEdit#logView {
-                background: #10251f;
-                color: #ecfff6;
+                background: #ffffff;
+                color: #54718c;
                 border: 0;
                 border-radius: 10px;
                 padding: 10px;
-                selection-background-color: #d9f36a;
-                selection-color: #17352f;
+                selection-background-color: #ffdce8;
+                selection-color: #2f5f88;
             }
             QPushButton {
                 border: 0;
@@ -589,34 +590,34 @@ private:
                 text-align: center;
             }
             QPushButton[tone="accent"] {
-                background: #d9f36a;
-                color: #17352f;
+                background: #5bcefa;
+                color: #ffffff;
             }
             QPushButton[tone="accentLight"] {
-                background: #eff7cb;
-                color: #17352f;
-                border: 1px solid #dce8a3;
+                background: #f5a9b8;
+                color: #ffffff;
+                border: 1px solid #ef97a9;
             }
             QPushButton[tone="soft"] {
-                background: #edf2ef;
-                color: #17352f;
-                border: 1px solid #d8e1db;
+                background: #ffffff;
+                color: #4f7893;
+                border: 1px solid #d8eaf6;
             }
             QPushButton[tone="danger"] {
-                background: #f6e7df;
-                color: #7b3d21;
-                border: 1px solid #ebcfbf;
+                background: #ffd6e4;
+                color: #a45373;
+                border: 1px solid #f0bacd;
             }
             QPushButton:hover {
-                background: #ffffff;
+                background: #fef7fb;
             }
             QPushButton:pressed {
-                background: #d6ded8;
+                background: #eef8ff;
             }
             QPushButton:disabled {
-                background: #d5ddd8;
-                color: #80908a;
-                border: 1px solid #cfd8d2;
+                background: #f3f6f9;
+                color: #a6afbb;
+                border: 1px solid #e1e8ee;
             }
         )"));
     }

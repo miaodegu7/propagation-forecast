@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="SingleExe|x64">
+      <Configuration>SingleExe</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="PackageQt|x64">
+      <Configuration>PackageQt</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{2F2A5B26-6B8A-4C5A-9A3D-9670E67509D0}</ProjectGuid>
+    <RootNamespace>propagationforecast</RootNamespace>
+    <Keyword>MakeFileProj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='SingleExe|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='PackageQt|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup>
+    <NMakeBuildCommandLine />
+    <NMakeReBuildCommandLine />
+    <NMakeCleanCommandLine />
+    <NMakeOutput />
+    <NMakePreprocessorDefinitions />
+    <NMakeIncludeSearchPath />
+    <NMakeForcedIncludes />
+    <NMakeAssemblySearchPath />
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <NMakeBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-build.ps1" -Mode Build</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-build.ps1" -Mode Build -CleanFirst</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-build.ps1" -Mode Clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)propagation_qt_desktop.exe</NMakeOutput>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='SingleExe|x64'">
+    <NMakeBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-single-bot.ps1" -Mode Build</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-single-bot.ps1" -Mode Build -CleanFirst</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-single-bot.ps1" -Mode Clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)dist-vs-single\propagation_bot.exe</NMakeOutput>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='PackageQt|x64'">
+    <NMakeBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-qt.ps1" -Mode Build</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-qt.ps1" -Mode Build -CleanFirst</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\vs\vs-package-qt.ps1" -Mode Clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(ProjectDir)dist-vs-qt\propagation_qt_desktop.exe</NMakeOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\awards.c" />
+    <ClCompile Include="src\desktop_qt.cpp" />
+    <ClCompile Include="src\desktop_win.cpp" />
+    <ClCompile Include="src\fetch.c" />
+    <ClCompile Include="src\hamalert.c" />
+    <ClCompile Include="src\http_server.c" />
+    <ClCompile Include="src\main.c" />
+    <ClCompile Include="src\psk.c" />
+    <ClCompile Include="src\runtime.c" />
+    <ClCompile Include="src\storage.c" />
+    <ClCompile Include="src\util.c" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="src\app.h" />
+    <ClInclude Include="src\third_party\stb_image.h" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include=".editorconfig" />
+    <None Include=".gitattributes" />
+    <None Include=".gitignore" />
+    <None Include=".github\scripts\package_windows.py" />
+    <None Include=".github\workflows\build-windows.yml" />
+    <None Include="README.md" />
+    <None Include="Makefile" />
+    <None Include="deploy\propagation-bot.service.example" />
+    <None Include="deploy\windows\README.md" />
+    <None Include="deploy\windows\NapCat-快速开始.md" />
+    <None Include="deploy\windows\install-startup-task.ps1" />
+    <None Include="deploy\windows\run-watchdog.bat" />
+    <None Include="deploy\windows\watchdog.ps1" />
+    <None Include="tools\vs\README.md" />
+    <None Include="tools\vs\vs-build.ps1" />
+    <None Include="tools\vs\vs-common.ps1" />
+    <None Include="tools\vs\vs-package-qt.ps1" />
+    <None Include="tools\vs\vs-package-single-bot.ps1" />
+  </ItemGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

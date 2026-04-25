@@ -1,0 +1,127 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0EAC9B4E-C522-4A48-8AFA-1C76E85C62CD}</UniqueIdentifier>
+      <Extensions>c;cc;cxx;cpp</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{08366450-265B-4D8B-8D7A-CB8F77011157}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx</Extensions>
+    </Filter>
+    <Filter Include="Build Scripts">
+      <UniqueIdentifier>{4EA5AA49-1BE6-4499-ADCC-4C49EAC65E7D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Deploy">
+      <UniqueIdentifier>{329B0B42-0D3A-4A8D-83BB-DA41F7F0D8AC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Docs">
+      <UniqueIdentifier>{7472385D-90D4-4A22-982A-A6D35566D31A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Repo Meta">
+      <UniqueIdentifier>{AA65A29F-65A5-4E04-9A4A-AB305DF26C8E}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClCompile Include="src\awards.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\desktop_qt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\desktop_win.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\fetch.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hamalert.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\http_server.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\main.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\psk.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\runtime.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\storage.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\util.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClInclude Include="src\app.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\third_party\stb_image.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include=".editorconfig">
+      <Filter>Repo Meta</Filter>
+    </None>
+    <None Include=".gitattributes">
+      <Filter>Repo Meta</Filter>
+    </None>
+    <None Include=".gitignore">
+      <Filter>Repo Meta</Filter>
+    </None>
+    <None Include=".github\scripts\package_windows.py">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include=".github\workflows\build-windows.yml">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="README.md">
+      <Filter>Docs</Filter>
+    </None>
+    <None Include="Makefile">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="deploy\propagation-bot.service.example">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="deploy\windows\README.md">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="deploy\windows\NapCat-快速开始.md">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="deploy\windows\install-startup-task.ps1">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="deploy\windows\run-watchdog.bat">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="deploy\windows\watchdog.ps1">
+      <Filter>Deploy</Filter>
+    </None>
+    <None Include="tools\vs\README.md">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="tools\vs\vs-build.ps1">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="tools\vs\vs-common.ps1">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="tools\vs\vs-package-qt.ps1">
+      <Filter>Build Scripts</Filter>
+    </None>
+    <None Include="tools\vs\vs-package-single-bot.ps1">
+      <Filter>Build Scripts</Filter>
+    </None>
+  </ItemGroup>
+</Project>

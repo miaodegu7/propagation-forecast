@@ -1,6 +1,6 @@
 #include "app.h"
 
-/* runtime.c 负责“把所有模块串起来”：
+/* runtime.c 负责链接模块：
  * 1. 抓取外部数据
  * 2. 维护 snapshot 缓存
  * 3. 定时推送和事件告警
