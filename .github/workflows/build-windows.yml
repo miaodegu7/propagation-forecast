@@ -2,9 +2,25 @@ name: Build Windows Package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (optional, e.g. v1.2.3)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark release as prerelease"
+        required: false
+        default: true
+        type: boolean
   push:
     branches:
       - main
+      - preview
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -35,63 +51,89 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-base
             mingw-w64-ucrt-x86_64-qt6-svg
 
-      - name: Build package
+      - name: Build all variants
         id: build
         run: |
           set -euo pipefail
           output_file="$(cygpath -u "$GITHUB_OUTPUT")"
-          rm -rf dist
-          mkdir -p dist
 
-          static_log="build-static.log"
-          dynamic_log="build-dynamic.log"
-          build_ok=false
-          single_file=false
-          artifact_name=""
+          rm -rf dist-single dist-portable dist-qt release
+          mkdir -p dist-single dist-portable dist-qt release
 
-          if {
-            echo "[static] make clean"
+          single_log="build-single.log"
+          portable_log="build-portable.log"
+          qt_log="build-qt.log"
+
+          single_ok=false
+          portable_ok=false
+          qt_ok=false
+
+          {
+            echo "[single] make clean"
             make clean
-            echo "[static] make STATIC=1 EXEEXT=.exe"
-            make STATIC=1 EXEEXT=.exe
-            echo "[static] make qt-desktop"
-            make EXEEXT=.exe qt-desktop
-          } > "$static_log" 2>&1; then
-            cp propagation_bot.exe dist/
-            cp propagation_desktop.exe dist/
-            python .github/scripts/package_windows.py propagation_qt_desktop.exe dist "$MINGW_PREFIX/bin"
-            windeployqt6 --no-translations --no-compiler-runtime dist/propagation_qt_desktop.exe
-            build_ok=true
-            single_file=true
-            artifact_name="propagation-bot-windows-single-exe"
-          else
-            rm -f propagation_bot.exe
-            rm -f propagation_desktop.exe
-            rm -f propagation_qt_desktop.exe
-            {
-              echo "[dynamic] make clean"
-              make clean
-              echo "[dynamic] make EXEEXT=.exe"
-              make EXEEXT=.exe
-              echo "[dynamic] make qt-desktop"
-              make EXEEXT=.exe qt-desktop
-              echo "[dynamic] package dependencies"
-              python .github/scripts/package_windows.py propagation_bot.exe dist "$MINGW_PREFIX/bin"
-              cp propagation_desktop.exe dist/
-              python .github/scripts/package_windows.py propagation_qt_desktop.exe dist "$MINGW_PREFIX/bin"
-              windeployqt6 --no-translations --no-compiler-runtime dist/propagation_qt_desktop.exe
-            } > "$dynamic_log" 2>&1 || true
+            echo "[single] make STATIC=1 EXEEXT=.exe propagation_bot.exe"
+            make STATIC=1 EXEEXT=.exe propagation_bot.exe
+            cp propagation_bot.exe dist-single/
+          } > "$single_log" 2>&1 || true
 
-            if [ -f dist/propagation_bot.exe ] && [ -f dist/propagation_desktop.exe ] && [ -f dist/propagation_qt_desktop.exe ]; then
-              build_ok=true
-              single_file=false
-              artifact_name="propagation-bot-windows-portable"
-            fi
+          if [ -f dist-single/propagation_bot.exe ]; then
+            single_ok=true
           fi
 
-          echo "build_ok=$build_ok" >> "$output_file"
-          echo "single_file=$single_file" >> "$output_file"
-          echo "artifact_name=$artifact_name" >> "$output_file"
+          {
+            echo "[portable] make clean"
+            make clean
+            echo "[portable] make EXEEXT=.exe"
+            make EXEEXT=.exe
+            echo "[portable] make EXEEXT=.exe qt-desktop"
+            make EXEEXT=.exe qt-desktop
+            echo "[portable] package propagation_bot dependencies"
+            python .github/scripts/package_windows.py propagation_bot.exe dist-portable "$MINGW_PREFIX/bin"
+            cp propagation_desktop.exe dist-portable/
+            echo "[portable] package propagation_qt_desktop dependencies"
+            python .github/scripts/package_windows.py propagation_qt_desktop.exe dist-portable "$MINGW_PREFIX/bin"
+            windeployqt6 --no-translations --no-compiler-runtime dist-portable/propagation_qt_desktop.exe
+          } > "$portable_log" 2>&1 || true
+
+          if [ -f dist-portable/propagation_bot.exe ] && [ -f dist-portable/propagation_desktop.exe ] && [ -f dist-portable/propagation_qt_desktop.exe ]; then
+            portable_ok=true
+          fi
+
+          {
+            echo "[qt] make clean"
+            make clean
+            echo "[qt] make EXEEXT=.exe qt-desktop"
+            make EXEEXT=.exe qt-desktop
+            echo "[qt] package propagation_qt_desktop dependencies"
+            python .github/scripts/package_windows.py propagation_qt_desktop.exe dist-qt "$MINGW_PREFIX/bin"
+            windeployqt6 --no-translations --no-compiler-runtime dist-qt/propagation_qt_desktop.exe
+          } > "$qt_log" 2>&1 || true
+
+          if [ -f dist-qt/propagation_qt_desktop.exe ]; then
+            qt_ok=true
+          fi
+
+          if [ "$single_ok" = "true" ]; then
+            cp dist-single/propagation_bot.exe release/propagation_bot.exe
+          fi
+
+          if [ "$portable_ok" = "true" ]; then
+            python -c "from pathlib import Path; import zipfile; src=Path('dist-portable'); out=Path('release/propagation-windows-portable.zip'); out.parent.mkdir(parents=True, exist_ok=True); zf=zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED); [zf.write(p, p.relative_to(src)) for p in src.rglob('*') if p.is_file()]; zf.close()"
+          fi
+
+          if [ "$qt_ok" = "true" ]; then
+            python -c "from pathlib import Path; import zipfile; src=Path('dist-qt'); out=Path('release/propagation-qt-desktop.zip'); out.parent.mkdir(parents=True, exist_ok=True); zf=zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED); [zf.write(p, p.relative_to(src)) for p in src.rglob('*') if p.is_file()]; zf.close()"
+          fi
+
+          all_ok=false
+          if [ "$single_ok" = "true" ] && [ "$portable_ok" = "true" ] && [ "$qt_ok" = "true" ]; then
+            all_ok=true
+          fi
+
+          echo "single_ok=$single_ok" >> "$output_file"
+          echo "portable_ok=$portable_ok" >> "$output_file"
+          echo "qt_ok=$qt_ok" >> "$output_file"
+          echo "all_ok=$all_ok" >> "$output_file"
 
       - name: Upload build logs
         if: always()
@@ -101,34 +143,78 @@ jobs:
           path: build-*.log
           if-no-files-found: warn
 
-      - name: Upload artifact
-        if: steps.build.outputs.build_ok == 'true'
+      - name: Upload single artifact
+        if: steps.build.outputs.single_ok == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.build.outputs.artifact_name }}
-          path: dist/
+          name: propagation-bot-windows-single-exe
+          path: dist-single/propagation_bot.exe
           if-no-files-found: error
+
+      - name: Upload portable artifact
+        if: steps.build.outputs.portable_ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: propagation-bot-windows-portable
+          path: dist-portable/
+          if-no-files-found: error
+
+      - name: Upload Qt artifact
+        if: steps.build.outputs.qt_ok == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: propagation-bot-qt-desktop
+          path: dist-qt/
+          if-no-files-found: error
+
+      - name: Resolve release metadata
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        id: release_meta
+        run: |
+          set -euo pipefail
+          output_file="$(cygpath -u "$GITHUB_OUTPUT")"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag_name="${GITHUB_REF_NAME}"
+            prerelease="false"
+          else
+            tag_name="${{ inputs.release_tag }}"
+            prerelease="${{ inputs.prerelease }}"
+            if [ -z "$tag_name" ]; then
+              tag_name="preview-${GITHUB_SHA:0:7}"
+            fi
+          fi
+          echo "tag_name=$tag_name" >> "$output_file"
+          echo "prerelease=$prerelease" >> "$output_file"
+
+      - name: Publish release assets
+        if: (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && steps.build.outputs.all_ok == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: Windows Build ${{ steps.release_meta.outputs.tag_name }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: |
+            release/propagation_bot.exe
+            release/propagation-windows-portable.zip
+            release/propagation-qt-desktop.zip
 
       - name: Write summary
         if: always()
         run: |
           summary_file="$(cygpath -u "$GITHUB_STEP_SUMMARY")"
-          if [ "${{ steps.build.outputs.build_ok }}" = "true" ] && [ "${{ steps.build.outputs.single_file }}" = "true" ]; then
-            echo "生成结果：单文件 EXE 已成功构建。" >> "$summary_file"
-          elif [ "${{ steps.build.outputs.build_ok }}" = "true" ]; then
-            echo "生成结果：静态单文件 EXE 未通过，已自动退回为便携包（EXE + 依赖 DLL）。" >> "$summary_file"
+          echo "Windows build status:" >> "$summary_file"
+          echo "- single:   ${{ steps.build.outputs.single_ok }}" >> "$summary_file"
+          echo "- portable: ${{ steps.build.outputs.portable_ok }}" >> "$summary_file"
+          echo "- qt:       ${{ steps.build.outputs.qt_ok }}" >> "$summary_file"
+          echo "" >> "$summary_file"
+          if [ "${{ steps.build.outputs.all_ok }}" = "true" ]; then
+            echo "All three variants built successfully." >> "$summary_file"
           else
-            echo "生成结果：Windows 构建失败，下面附上最近的错误摘要。" >> "$summary_file"
-            echo "" >> "$summary_file"
-            echo "```text" >> "$summary_file"
-            if [ -f build-dynamic.log ]; then
-              tail -n 80 build-dynamic.log >> "$summary_file"
-            elif [ -f build-static.log ]; then
-              tail -n 80 build-static.log >> "$summary_file"
-            fi
-            echo "```" >> "$summary_file"
+            echo "At least one variant failed. Check uploaded logs." >> "$summary_file"
           fi
 
-      - name: Fail if build failed
-        if: steps.build.outputs.build_ok != 'true'
+      - name: Fail if any variant failed
+        if: steps.build.outputs.all_ok != 'true'
         run: exit 1
