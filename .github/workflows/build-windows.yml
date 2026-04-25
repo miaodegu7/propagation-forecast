@@ -118,33 +118,11 @@ jobs:
           fi
 
           if [ "$portable_ok" = "true" ]; then
-            python - <<'PY'
-from pathlib import Path
-import zipfile
-
-src = Path('dist-portable')
-out = Path('release/propagation-windows-portable.zip')
-out.parent.mkdir(parents=True, exist_ok=True)
-with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for p in src.rglob('*'):
-        if p.is_file():
-            zf.write(p, p.relative_to(src))
-PY
+            python -c "from pathlib import Path; import zipfile; src=Path('dist-portable'); out=Path('release/propagation-windows-portable.zip'); out.parent.mkdir(parents=True, exist_ok=True); zf=zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED); [zf.write(p, p.relative_to(src)) for p in src.rglob('*') if p.is_file()]; zf.close()"
           fi
 
           if [ "$qt_ok" = "true" ]; then
-            python - <<'PY'
-from pathlib import Path
-import zipfile
-
-src = Path('dist-qt')
-out = Path('release/propagation-qt-desktop.zip')
-out.parent.mkdir(parents=True, exist_ok=True)
-with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for p in src.rglob('*'):
-        if p.is_file():
-            zf.write(p, p.relative_to(src))
-PY
+            python -c "from pathlib import Path; import zipfile; src=Path('dist-qt'); out=Path('release/propagation-qt-desktop.zip'); out.parent.mkdir(parents=True, exist_ok=True); zf=zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED); [zf.write(p, p.relative_to(src)) for p in src.rglob('*') if p.is_file()]; zf.close()"
           fi
 
           all_ok=false
